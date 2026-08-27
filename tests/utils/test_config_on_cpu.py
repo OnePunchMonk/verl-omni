@@ -31,3 +31,28 @@ def test_validate_config_rejects_unknown_resume_mode():
 def test_validate_config_requires_resume_path():
     with pytest.raises(ValueError, match="resume_from_path"):
         validate_config(_config(resume_mode="resume_path"))
+
+
+def test_validate_config_warns_when_dapo_reward_manager_is_used_with_gspo():
+    config = OmegaConf.create(
+        {
+            "trainer": {"resume_mode": "disable"},
+            "reward": {"reward_manager": {"name": "dapo"}},
+            "actor_rollout_ref": {"actor": {"policy_loss": {"loss_mode": "gspo"}}},
+        }
+    )
+
+    with pytest.warns(UserWarning, match="still runs GSPO, not DAPO"):
+        validate_config(config)
+
+
+def test_validate_config_accepts_dapo_reward_manager_with_vanilla_loss():
+    config = OmegaConf.create(
+        {
+            "trainer": {"resume_mode": "disable"},
+            "reward": {"reward_manager": {"name": "dapo"}},
+            "actor_rollout_ref": {"actor": {"policy_loss": {"loss_mode": "vanilla"}}},
+        }
+    )
+
+    validate_config(config)
