@@ -1,5 +1,7 @@
 # Qwen3-Omni Thinker DAPO Trainer
 
+Last updated: 08/27/2026
+
 This example provides the first Qwen3-Omni Thinker DAPO milestone on the V1
 omni trainer: GPU LoRA training on GSM8K with clip-higher, token-level policy
 gradient, GRPO advantages, and the registered DAPO reward manager.
