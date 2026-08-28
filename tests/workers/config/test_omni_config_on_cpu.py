@@ -88,8 +88,8 @@ class TestOmniAlgoConfig:
         assert algorithm_cfg.kl_ctrl.kl_coef == pytest.approx(0.02)
         assert algorithm_cfg.kl_ctrl.target_kl == pytest.approx(0.03)
         assert algorithm_cfg.rollout_correction is not None
-        assert algorithm_cfg.rollout_correction.rollout_is == "token"
-        assert algorithm_cfg.rollout_correction.rollout_is_threshold == pytest.approx(3.0)
+        assert algorithm_cfg.rollout_correction.get("rollout_is") == "token"
+        assert algorithm_cfg.rollout_correction.get("rollout_is_threshold") == pytest.approx(3.0)
 
 
 class TestOmniLossConfig:
