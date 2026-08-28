@@ -1,10 +1,10 @@
 # Qwen3-Omni Thinker DAPO Trainer
 
-Last updated: 08/27/2026
+Last updated: 08/28/2026
 
 This example provides the first Qwen3-Omni Thinker DAPO milestone on the V1
-omni trainer: GPU LoRA training on GSM8K with clip-higher, token-level policy
-gradient, GRPO advantages, and the registered DAPO reward manager.
+omni trainer: GPU LoRA training on multimodal AVQA with clip-higher,
+token-level policy gradient, GRPO advantages, and the AVQA choice reward.
 
 The Phase 1 launcher intentionally disables dynamic sampling:
 
@@ -14,14 +14,29 @@ algorithm.filter_groups.enable=false
 
 It also does not enable the overlong reward buffer. Those components are kept
 out of this baseline so the token-level DAPO policy path can be validated
-independently. Do not use the reward-manager name alone to identify an
-algorithm: `reward.reward_manager.name=dapo` with `policy_loss.loss_mode=gspo`
-still runs GSPO and now emits a configuration warning.
+independently. In this Phase 1 recipe, DAPO refers to vanilla token-level
+policy loss with asymmetric clipping, GRPO advantages, and no KL penalty. The
+registered naive reward manager calls the AVQA `choice_reward`; the reward
+manager name alone does not select the optimization algorithm.
 
 ## Run
 
-Prepare GSM8K parquet files under `~/data/gsm8k`, then launch from the
-repository root:
+Download and extract the AVQA-R1-6K data, then convert it from the repository
+root:
+
+```bash
+python examples/gspo_trainer/data_process/avqa.py \
+    --input_dir /path/to/raw/AVQA_R1 \
+    --output_dir ~/data/avqa_r1_6k
+```
+
+Install the audio and multimodal processing dependencies on every Ray worker,
+then launch:
+
+```bash
+pip install -e ".[audio]"
+pip install qwen-vl-utils
+```
 
 ```bash
 bash examples/dapo_trainer/qwen3_omni/run_qwen3_omni_thinker_dapo_lora_v1.sh
@@ -33,10 +48,16 @@ model, data, or any Hydra setting without editing the script:
 ```bash
 MODEL_PATH=/path/to/Qwen3-Omni-30B-A3B-Instruct \
 TRAIN_FILE=/path/to/train.parquet \
-VAL_FILE=/path/to/test.parquet \
+VAL_FILE=/path/to/validation.parquet \
 bash examples/dapo_trainer/qwen3_omni/run_qwen3_omni_thinker_dapo_lora_v1.sh \
     trainer.total_training_steps=2
 ```
+
+Validation runs once before training and every 10 steps by default. It uses
+greedy decoding (`n=1`, `do_sample=false`, `temperature=0`, `top_p=1`,
+`top_k=-1`) over the full validation split. Plot
+`val-core/avqa_r1_6k/reward/mean@1` against the trainer step for the directly
+comparable in-trainer validation curve.
 
 Only the Thinker LoRA adapters are trained. Talker, code2wav, code predictor,
 visual projection, and audio-tower modules are excluded, and the vision tower

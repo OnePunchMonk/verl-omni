@@ -50,7 +50,7 @@ class TestOmniAlgoConfig:
         with pytest.raises(ValueError):
             OmniAlgoConfig(**{field_name: value})
 
-    def test_instantiate_online_algorithm_via_hydra(self):
+    def test_enabled_filter_groups_survive_hydra_conversion(self):
         from hydra import compose, initialize_config_dir
         from verl.utils.config import omega_conf_to_dataclass
 
@@ -61,8 +61,9 @@ class TestOmniAlgoConfig:
             cfg = compose(
                 config_name="omni_trainer",
                 overrides=[
-                    "algorithm.filter_groups.enable=false",
+                    "algorithm.filter_groups.enable=true",
                     "algorithm.filter_groups.metric=acc",
+                    "algorithm.filter_groups.max_num_gen_batches=7",
                     "algorithm.use_kl_in_reward=false",
                 ],
             )
@@ -72,8 +73,9 @@ class TestOmniAlgoConfig:
         assert isinstance(algorithm_cfg, OmniAlgoConfig)
         assert isinstance(algorithm_cfg, AlgoConfig)
         assert isinstance(algorithm_cfg.filter_groups, FilterGroupsConfig)
-        assert algorithm_cfg.filter_groups.enable is False
+        assert algorithm_cfg.filter_groups.enable is True
         assert algorithm_cfg.filter_groups.metric == "acc"
+        assert algorithm_cfg.filter_groups.max_num_gen_batches == 7
         assert algorithm_cfg.use_kl_in_reward is False
         assert algorithm_cfg.rollout_correction is not None
 

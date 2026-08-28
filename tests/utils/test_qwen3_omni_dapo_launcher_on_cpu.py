@@ -27,7 +27,6 @@ DAPO_WITHOUT_DYNAMIC_SAMPLING_SETTINGS = (
     "algorithm.use_kl_in_reward=false",
     "algorithm.filter_groups.enable=false",
     "reward.reward_manager.source=register",
-    "reward.reward_manager.name=dapo",
     'engine_kwargs.vllm_omni.pipeline_name="qwen3_omni_moe"',
 )
 
@@ -48,6 +47,20 @@ def test_dapo_example_launcher_has_phase_one_contract():
     _assert_dapo_without_dynamic_sampling_contract(launcher)
     assert ".*talker.*|.*code2wav.*|.*code_predictor.*|.*visual.*|.*audio_tower.*" in launcher
     assert "actor_rollout_ref.actor.freeze_vision_tower=true" in launcher
+    assert 'TRAIN_FILE=${TRAIN_FILE:-"$HOME/data/avqa_r1_6k/train.parquet"}' in launcher
+    assert 'VAL_FILE=${VAL_FILE:-"$HOME/data/avqa_r1_6k/validation.parquet"}' in launcher
+    assert "data.custom_cls.name=QwenOmniRLHFDataset" in launcher
+    assert "reward.reward_manager.name=naive" in launcher
+    assert "reward.custom_reward_function.path=verl_omni/utils/reward_score/choice_reward.py" in launcher
+    assert "reward.custom_reward_function.name=compute_score" in launcher
+    assert "trainer.val_before_train=true" in launcher
+    assert "actor_rollout_ref.rollout.val_kwargs.n=1" in launcher
+    assert "actor_rollout_ref.rollout.val_kwargs.do_sample=false" in launcher
+    assert "actor_rollout_ref.rollout.val_kwargs.temperature=0" in launcher
+    assert "actor_rollout_ref.rollout.val_kwargs.top_p=1.0" in launcher
+    assert "actor_rollout_ref.rollout.val_kwargs.top_k=-1" in launcher
+    assert "actor_rollout_ref.rollout.val_kwargs.temperature=1.0" not in launcher
+    assert "actor_rollout_ref.rollout.val_kwargs.top_p=0.7" not in launcher
 
 
 def test_dapo_tiny_random_smoke_matches_example_contract():
@@ -55,6 +68,7 @@ def test_dapo_tiny_random_smoke_matches_example_contract():
     smoke = (repo_root / "tests/special_e2e/run_dapo_qwen3_omni_thinker_lora_v1_smoke.sh").read_text(encoding="utf-8")
 
     _assert_dapo_without_dynamic_sampling_contract(smoke)
+    assert "reward.reward_manager.name=dapo" in smoke
     assert "build_qwen3_omni_tiny_random.py" in smoke
     assert "SKIP_COMPAT_DEPS_INSTALL:-0" in smoke
     assert 'trainer.total_training_steps="${TOTAL_TRAIN_STEPS}"' in smoke
