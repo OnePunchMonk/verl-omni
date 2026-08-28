@@ -50,7 +50,7 @@ class TestOmniAlgoConfig:
         with pytest.raises(ValueError):
             OmniAlgoConfig(**{field_name: value})
 
-    def test_enabled_filter_groups_survive_hydra_conversion(self):
+    def test_inherited_online_fields_survive_hydra_conversion(self):
         from hydra import compose, initialize_config_dir
         from verl.utils.config import omega_conf_to_dataclass
 
@@ -64,7 +64,13 @@ class TestOmniAlgoConfig:
                     "algorithm.filter_groups.enable=true",
                     "algorithm.filter_groups.metric=acc",
                     "algorithm.filter_groups.max_num_gen_batches=7",
-                    "algorithm.use_kl_in_reward=false",
+                    "algorithm.use_kl_in_reward=true",
+                    "algorithm.kl_penalty=low_var_kl",
+                    "algorithm.kl_ctrl.type=adaptive",
+                    "algorithm.kl_ctrl.kl_coef=0.02",
+                    "algorithm.kl_ctrl.target_kl=0.03",
+                    "algorithm.rollout_correction.rollout_is=token",
+                    "algorithm.rollout_correction.rollout_is_threshold=3.0",
                 ],
             )
 
@@ -76,8 +82,14 @@ class TestOmniAlgoConfig:
         assert algorithm_cfg.filter_groups.enable is True
         assert algorithm_cfg.filter_groups.metric == "acc"
         assert algorithm_cfg.filter_groups.max_num_gen_batches == 7
-        assert algorithm_cfg.use_kl_in_reward is False
+        assert algorithm_cfg.use_kl_in_reward is True
+        assert algorithm_cfg.kl_penalty == "low_var_kl"
+        assert algorithm_cfg.kl_ctrl.type == "adaptive"
+        assert algorithm_cfg.kl_ctrl.kl_coef == pytest.approx(0.02)
+        assert algorithm_cfg.kl_ctrl.target_kl == pytest.approx(0.03)
         assert algorithm_cfg.rollout_correction is not None
+        assert algorithm_cfg.rollout_correction.rollout_is == "token"
+        assert algorithm_cfg.rollout_correction.rollout_is_threshold == pytest.approx(3.0)
 
 
 class TestOmniLossConfig:

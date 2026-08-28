@@ -89,6 +89,8 @@ python3 -m verl_omni.trainer.main_omni \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.fsdp_config.param_offload=true \
     actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
+    algorithm.trainer_type=policy_gradient \
+    algorithm.sample_source=online \
     algorithm.adv_estimator=grpo \
     algorithm.use_kl_in_reward=false \
     algorithm.filter_groups.enable=false \

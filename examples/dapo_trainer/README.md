@@ -30,6 +30,10 @@ python examples/gspo_trainer/data_process/avqa.py \
     --output_dir ~/data/avqa_r1_6k
 ```
 
+The converted parquet stores absolute image and audio paths. Every Ray worker
+must mount the converted dataset and its media files at the same absolute path
+used during conversion.
+
 Install the audio and multimodal processing dependencies on every Ray worker,
 then launch:
 
@@ -68,3 +72,7 @@ The corresponding tiny-random two-step smoke is:
 ```bash
 bash tests/special_e2e/run_dapo_qwen3_omni_thinker_lora_v1_smoke.sh
 ```
+
+The smoke uses dummy GSM8K data and the registered DAPO reward manager only to
+exercise the training path. It is not a substitute for the AVQA validation
+curve or evidence of convergence.
