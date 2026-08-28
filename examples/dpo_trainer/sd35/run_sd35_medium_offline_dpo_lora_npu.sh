@@ -2,6 +2,7 @@
 set -x
 
 export TORCH_COMPILE_DISABLE=1
+export VERL_DATAPROTO_SERIALIZATION_METHOD=numpy
 
 # Set WORKSPACE to any writable directory; defaults to $HOME.
 WORKSPACE=${WORKSPACE:-$HOME}
@@ -44,3 +45,4 @@ python3 -m verl_omni.trainer.main_diffusion --config-name=offline_dpo_trainer \
     trainer.save_freq=30 \
     trainer.total_epochs=300 \
     trainer.total_training_steps=1000 "$@"
+
