@@ -27,6 +27,23 @@ async server plumbing, and rollout config schema wiring are follow-up work
 once the sampling core itself is trusted. Do not register this in
 ``_ROLLOUT_REGISTRY`` until that wiring exists -- an incomplete registry
 entry would silently break rollout backend selection for every other model.
+
+Why a separate train-side path at all, instead of routing everything
+through vLLM-Omni: #97 also names an already-merged alternative, vLLM-Omni's
+generic ``DiffusersAdapterPipeline`` (``--diffusion-load-format diffusers``,
+vllm-project/vllm-omni#2724). That adapter is a black-box wrapper around
+any diffusers pipeline's own ``__call__()`` -- it works today, but by design
+exposes none of the per-step trajectory data (latents, timesteps, log-probs)
+that FlowGRPO-style RL training needs, and explicitly does not support CFG
+parallel, sequence parallel, or step-wise/continuous batching. Calling the
+transformer directly, as this module does, is what makes the SDE-window
+bookkeeping and log-prob collection in ``sde_denoise_loop`` possible in the
+first place; a black-box adapter has no hook for either. Once wired up,
+this path is meant to sit alongside the vLLM-Omni rollout as another
+``_ROLLOUT_REGISTRY`` backend for models/algorithms that need in-process
+sampling (e.g. no vLLM-Omni rollout adapter exists yet, or the trajectory
+data must come from the exact weights currently being trained rather than a
+periodically-synced inference copy) -- not a replacement for it.
 """
 
 from __future__ import annotations
