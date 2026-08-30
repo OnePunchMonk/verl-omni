@@ -48,7 +48,7 @@ vs optimisation) on the same setup, not as cross-cluster benchmarks.
 
 ## Supported architectures
 
-The registry (`verl_omni.utils.mfu._REGISTRY`) currently ships estimators for:
+The registry (`verl_omni.utils.mfu.diffusion_flops_counter._REGISTRY`) currently ships estimators for:
 
 | Architecture | Registry key(s) | Attention topology |
 |---|---|---|
