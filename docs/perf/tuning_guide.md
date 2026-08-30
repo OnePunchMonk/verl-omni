@@ -15,9 +15,9 @@ A FlowGRPO-style step has three stages, and each has its own tuning surface:
 
 | Stage | What it does | Tune with |
 |---|---|---|
-| Rollout | Generate images/video/audio for each prompt | {ref}`request-level-batching` / {ref}`rollout_batching` |
+| Rollout | Generate images/video/audio for each prompt | {ref}`rollout_batching` |
 | Reward | Score generated samples | [Async Reward](../algo/async_reward.md) |
-| Actor | Compute advantages and update the policy | {ref}`diffusion_mfu` "Tuning and Improving MFU" |
+| Actor | Compute advantages and update the policy | [Tuning and Improving MFU](diffusion_mfu.md#tuning-and-improving-mfu) |
 
 Before changing any config, profile the step to see which stage actually
 dominates wall time — see [Profiling FlowGRPO / diffusion training](profiler.md).
@@ -59,12 +59,12 @@ example recipes.
 
 ## 3. Tune actor throughput and memory
 
-{ref}`diffusion_mfu`'s "Tuning and Improving MFU" section is the actor-side
-playbook: `param_offload` / `optimizer_offload`, Ulysses sequence-parallel
-size, micro-batch size, `layered_summon`, and the gradient-checkpointing MFU
-caveat. Read that section before changing actor config — it also explains
-*why* each knob helps, which matters when your OOM point differs from the
-reference 20B-on-H200 setup it was written against.
+[Tuning and Improving MFU](diffusion_mfu.md#tuning-and-improving-mfu) is the
+actor-side playbook: `param_offload` / `optimizer_offload`, Ulysses
+sequence-parallel size, micro-batch size, `layered_summon`, and the
+gradient-checkpointing MFU caveat. Read that section before changing actor
+config — it also explains *why* each knob helps, which matters when your OOM
+point differs from the reference 20B-on-H200 setup it was written against.
 
 ## 4. Troubleshooting checklist
 
@@ -80,7 +80,8 @@ Symptoms that show up regardless of which stage causes them:
 
 **OOM during `update_actor` / `update_weights`**
 - This is the actor-side path — go through the offload ordering in
-  {ref}`diffusion_mfu`'s tuning section (`optimizer_offload=True` first, then
+  [Tuning and Improving MFU](diffusion_mfu.md#tuning-and-improving-mfu)
+  (`optimizer_offload=True` first, then
   `param_offload=True` as a last resort) rather than reducing batch size
   first, since offloading costs less throughput than a smaller micro-batch.
 - If both offload flags are already `True`, confirm `layered_summon=True` —
@@ -91,7 +92,8 @@ Symptoms that show up regardless of which stage causes them:
   changing anything — reward cost is easy to misattribute to rollout because
   both run inside the same wall-clock "generation" window when reward is
   colocated.
-- Move to a disaggregated reward pool (`enable_resource_pool=True`) so
+- Move to a disaggregated reward pool
+  (`reward.reward_model.enable_resource_pool=True`) so
   scoring overlaps generation instead of gating it; see
   [Async Reward](../algo/async_reward.md).
 
