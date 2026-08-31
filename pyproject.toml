@@ -64,6 +64,9 @@ gpu = [
     "vllm==0.28.0",
     "kernels==0.16.0",
     "liger-kernel",
+    # vllm==0.27.0 pulls in flashinfer-python transitively with no floor; 0.6.16.post3
+    # crashes at import time on any TP>=2 run (see #505). Pin the floor explicitly.
+    "flashinfer-python>=0.6.16.post4",
 ]
 # Training stack (install in step 2).
 # Git commit must match .github/verl_pin.txt (reports as 0.10.0.dev at fefb080).
