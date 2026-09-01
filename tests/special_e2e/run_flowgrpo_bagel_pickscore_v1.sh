@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
-# FlowGRPO BAGEL PickScore LoRA e2e smoke test (V1 trainer: TransferQueue +
-# ReplayBuffer + sync mode), vllm_omni rollout.
-#
-# This is the v1 counterpart of run_flowgrpo_bagel_pickscore.sh. It uses the
-# new `verl_omni.trainer.main_diffusion_v1` entrypoint, which selects
-# `PolicyGradientDiffusionTrainerV1Sync` via `trainer.v1.trainer_mode=sync`.
-#
-# Covers: Bagel NonDiffusers load -> vllm_omni BagelPipeline rollout ->
-# PickScore reward -> flow_grpo LoRA on *_moe_gen -> FSDP sync -> V1 trainer.
+# FlowGRPO BAGEL PickScore LoRA e2e smoke test, V1 trainer (sync mode).
+# V1 counterpart of run_flowgrpo_bagel_pickscore.sh via main_diffusion_v1.
 #
 # Requires: vllm-omni
 #   Builds offline if missing:

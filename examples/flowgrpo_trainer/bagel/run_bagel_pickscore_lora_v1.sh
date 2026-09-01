@@ -2,15 +2,8 @@
 # Bagel LoRA RL (V1 trainer: TransferQueue + ReplayBuffer + sync mode), vllm_omni
 # rollout (FlowGRPO) with PickScore reward.
 #
-# This is the v1 counterpart of run_bagel_pickscore_lora.sh. It uses the new
-# `verl_omni.trainer.main_diffusion_v1` entrypoint, which selects
-# `PolicyGradientDiffusionTrainerV1Sync` via `trainer.v1.trainer_mode=sync` and
-# wires verl's `AgentLoopManagerTQ` with `DiffusionAgentLoopWorkerTQ`.
-# TransferQueue is force-enabled inside the runner, so it does not need to be
-# set on the CLI.
-#
-# Reference (legacy v0 script):
-# verl-omni/examples/flowgrpo_trainer/bagel/run_bagel_pickscore_lora.sh
+# V1 counterpart of run_bagel_pickscore_lora.sh via main_diffusion_v1
+# (trainer.v1.trainer_mode=sync).
 #
 # Prerequisite: preprocess the PickScore dataset for BAGEL:
 #   python examples/flowgrpo_trainer/data_process/bagel_pickscore.py \
