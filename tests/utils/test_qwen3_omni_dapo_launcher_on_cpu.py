@@ -62,8 +62,6 @@ def test_dapo_example_launcher_has_phase_one_contract():
         "data.val_max_samples=-1",
         "data.validation_shuffle=false",
         "reward.reward_manager.name=naive",
-        # naive reward manager doesn't read reward_kwargs.overlong_buffer_cfg;
-        # overlong shaping needs reward_manager.name=dapo (see the smoke test).
         "reward.custom_reward_function.path=verl_omni/utils/reward_score/choice_reward.py",
         "reward.custom_reward_function.name=compute_score",
         "trainer.val_before_train=true",
@@ -93,8 +91,6 @@ def test_dapo_tiny_random_smoke_matches_example_contract():
     assert "SKIP_COMPAT_DEPS_INSTALL:-0" in smoke
     assert 'trainer.total_training_steps="${TOTAL_TRAIN_STEPS}"' in smoke
 
-    # Phase 2 (#446): overlong shaping is wired through reward.reward_kwargs and
-    # sized against this smoke's own data.max_response_length=512.
     assert "data.max_response_length=512" in settings
     assert {
         "reward.reward_kwargs.max_resp_len=512",

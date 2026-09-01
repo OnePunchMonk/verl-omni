@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Exit-criterion test for DAPO Phase 2 (#446): overlong penalty must change the
-reward on a truncated dummy response through the exact ``reward.reward_kwargs``
-path the Thinker DAPO recipe sets (see run_dapo_qwen3_omni_thinker_lora_v1_smoke.sh).
-"""
+"""Overlong penalty must change the reward on a truncated response (#446 Phase 2)."""
 
 import numpy as np
 import torch
