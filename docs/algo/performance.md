@@ -1,30 +1,9 @@
 (performance)=
 # Performance Reference
 
-Last updated: 09/01/2026
+Last updated: 06/17/2026
 
 Below are reference benchmark results for VeRL-Omni training runs.
-
-## DAPO Phase 1: Qwen3-Omni Thinker LoRA on AVQA
-
-> This single-seed reference used 4 NVIDIA A800-80G GPUs, FSDP2 LoRA rank 32,
-> train batch size 128, rollout `n=16`, tensor parallel size 2, and seed 42.
-> Greedy validation ran over all 1,911 AVQA examples before training and every
-> 10 steps.
-
-| Script | Model | Dataset | # GPUs | Train Batch Size | Rollouts per Prompt | LoRA Rank | LR |
-|--------|-------|---------|--------|------------------|---------------------|-----------|----|
-| `run_qwen3_omni_thinker_dapo_lora_v1.sh` | Qwen3-Omni-30B-A3B-Instruct | AVQA-R1-6K | 4 | 128 | 16 | 32 | 3e-6 |
-
-### Training and Validation Reward Curves
-
-![Qwen3-Omni Thinker DAPO training and AVQA validation reward curves](../assets/qwen3_omni_thinker_dapo_avqa_reward_curve.png)
-
-The full-validation mean choice reward increased from `0.728414` at step 0 to
-`0.824176` at step 50. The plot shows unsmoothed points; the corresponding
-[step-indexed metrics](../assets/qwen3_omni_thinker_dapo_avqa_reward_curve.csv)
-are included for reproducibility. This is a single-seed reward trend, not a
-multi-seed convergence or final-quality result.
 
 ## FlowGRPO: LoRA Training on Qwen-Image OCR
 

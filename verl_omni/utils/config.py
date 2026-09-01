@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import warnings
 from typing import Any
 
 
@@ -39,14 +38,3 @@ def validate_config(config: Any) -> None:
             raise ValueError("trainer.total_training_steps must be a positive integer or null.") from exc
         if total_steps <= 0:
             raise ValueError("trainer.total_training_steps must be a positive integer or null.")
-
-    reward_manager_name = _select(config, "reward.reward_manager.name")
-    policy_loss_mode = _select(config, "actor_rollout_ref.actor.policy_loss.loss_mode")
-    if reward_manager_name == "dapo" and policy_loss_mode == "gspo":
-        warnings.warn(
-            "reward.reward_manager.name='dapo' only selects the DAPO reward manager; "
-            "actor_rollout_ref.actor.policy_loss.loss_mode='gspo' still runs GSPO, not DAPO. "
-            "Use loss_mode='vanilla' with the DAPO clip-higher and token-mean settings for DAPO training.",
-            UserWarning,
-            stacklevel=2,
-        )
