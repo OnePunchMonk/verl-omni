@@ -66,13 +66,3 @@ comparable in-trainer validation curve.
 Only the Thinker LoRA adapters are trained. Talker, code2wav, code predictor,
 visual projection, and audio-tower modules are excluded, and the vision tower
 is frozen, matching the existing GSPO V1 baseline.
-
-The corresponding tiny-random two-step smoke is:
-
-```bash
-bash tests/special_e2e/run_dapo_qwen3_omni_thinker_lora_v1_smoke.sh
-```
-
-The smoke uses dummy GSM8K data and the registered DAPO reward manager only to
-exercise the training path. It is not a substitute for the AVQA validation
-curve or evidence of convergence.
