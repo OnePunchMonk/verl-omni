@@ -1,6 +1,6 @@
 # Qwen3-Omni Thinker DAPO Trainer
 
-Last updated: 08/28/2026
+Last updated: 09/04/2026
 
 This example provides the first Qwen3-Omni Thinker DAPO milestone on the V1
 omni trainer: GPU LoRA training on multimodal AVQA with clip-higher,
@@ -48,6 +48,25 @@ pipeline from `examples/gspo_trainer/data_process/mmk12.py`. It is not a new
 adapter — only the dataset, reward scorer, and `reward_kwargs.overlong_buffer_cfg.len`
 (sized for MMK12's longer 12288-token responses) differ from the AVQA
 recipe.
+
+**Phase 5 (#446): support matrix.** The top-level [README](../../README.md)
+now lists Qwen3-Omni-Thinker × DAPO as WIP (Phase 1-4 recipes above are not
+yet GPU-validated by a maintainer). **`reward.reward_manager.name=dapo` alone
+does not select the DAPO algorithm** — it only selects the DAPO reward
+manager (overlong buffer, math parsing). The optimization algorithm is
+selected by `actor_rollout_ref.actor.policy_loss.loss_mode` and
+`algorithm.adv_estimator`; running `loss_mode=gspo` with
+`reward_manager.name=dapo` still trains GSPO. See the
+[RFC](https://github.com/verl-project/verl-omni/issues/446) for the full
+GSPO-vs-DAPO knob table.
+
+## Recipes
+
+| Launcher | Dataset | Dynamic sampling | Overlong buffer |
+| --- | --- | --- | --- |
+| `run_qwen3_omni_thinker_dapo_lora_v1.sh` | AVQA | ✗ (Phase 1 baseline) | ✗ |
+| `run_qwen3_omni_thinker_dapo_dynamic_sampling_lora_v1.sh` | AVQA | ✅ | ✅ |
+| `run_qwen3_omni_thinker_dapo_lora_mmk12_v1.sh` | MMK12 | ✅ | ✅ |
 
 ## Run
 
