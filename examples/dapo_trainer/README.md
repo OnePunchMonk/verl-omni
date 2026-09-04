@@ -28,6 +28,18 @@ a working `name=dapo` recipe with overlong shaping enabled, and
 contract: `reward.reward_kwargs.overlong_buffer_cfg.{enable,len,penalty_factor,log}`
 and `reward.reward_kwargs.max_resp_len`.
 
+**Phase 3 (#446): dynamic sampling.** The upstream V1 `PPOTrainer` replay
+buffer already implements group filtering — this is config-only, no new
+trainer code. `run_qwen3_omni_thinker_dapo_dynamic_sampling_lora_v1.sh` sets
+`algorithm.filter_groups.enable=true` with `metric=acc` (the naive/DAPO
+reward managers always populate `reward_extra_info["acc"]`, see
+`verl.experimental.reward_loop.reward_manager.naive`), so the trainer drops
+uniform-reward groups (all-correct or all-wrong) and keeps generating until
+`data.train_batch_size` qualified prompts are collected, bounded by
+`algorithm.filter_groups.max_inflight_gen_batches`. Group filtering requires a
+streaming reward path (`reward.reward_model.enable=false`, the default), so
+this recipe uses the `dapo` reward manager rather than Phase 1's `naive` one.
+
 ## Run
 
 Download and extract the AVQA-R1-6K data, then convert it from the repository

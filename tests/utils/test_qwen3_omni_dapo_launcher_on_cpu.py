@@ -99,3 +99,28 @@ def test_dapo_tiny_random_smoke_matches_example_contract():
         "reward.reward_kwargs.overlong_buffer_cfg.penalty_factor=1.0",
         "reward.reward_kwargs.overlong_buffer_cfg.log=true",
     } <= settings
+
+
+def test_dapo_dynamic_sampling_example_launcher_has_phase_three_contract():
+    repo_root = Path(__file__).parents[2]
+    launcher = (
+        repo_root
+        / "examples/dapo_trainer/qwen3_omni/run_qwen3_omni_thinker_dapo_dynamic_sampling_lora_v1.sh"
+    ).read_text(encoding="utf-8")
+
+    settings = _script_settings(launcher)
+    # Same token-level DAPO policy contract as Phase 1, minus filter_groups.enable=false.
+    assert set(DAPO_WITHOUT_DYNAMIC_SAMPLING_SETTINGS) - {"algorithm.filter_groups.enable=false"} <= settings
+    assert "actor_rollout_ref.actor.policy_loss.loss_mode=gspo" not in settings
+    assert ".*talker.*|.*code2wav.*|.*code_predictor.*|.*visual.*|.*audio_tower.*" in launcher
+    assert "actor_rollout_ref.actor.freeze_vision_tower=true" in settings
+    assert {
+        "algorithm.filter_groups.enable=true",
+        "algorithm.filter_groups.metric=acc",
+        "reward.reward_model.enable=false",
+        "reward.reward_manager.name=dapo",
+        "reward.custom_reward_function.path=verl_omni/utils/reward_score/choice_reward.py",
+        "reward.custom_reward_function.name=compute_score",
+    } <= settings
+    # filter_groups requires the streaming (non-colocated) reward path.
+    assert "reward.reward_model.enable=true" not in settings
