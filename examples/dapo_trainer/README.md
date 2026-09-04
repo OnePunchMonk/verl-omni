@@ -40,6 +40,15 @@ uniform-reward groups (all-correct or all-wrong) and keeps generating until
 streaming reward path (`reward.reward_model.enable=false`, the default), so
 this recipe uses the `dapo` reward manager rather than Phase 1's `naive` one.
 
+**Phase 4 (#446): a second modality.**
+`run_qwen3_omni_thinker_dapo_lora_mmk12_v1.sh` applies the same Phase 1-3 DAPO
+contract (token-level clip-higher, dynamic sampling, overlong shaping) to
+MMK12 math reasoning, reusing the existing `mmk12_reward.py` scorer and data
+pipeline from `examples/gspo_trainer/data_process/mmk12.py`. It is not a new
+adapter — only the dataset, reward scorer, and `reward_kwargs.overlong_buffer_cfg.len`
+(sized for MMK12's longer 12288-token responses) differ from the AVQA
+recipe.
+
 ## Run
 
 Download and extract the AVQA-R1-6K data, then convert it from the repository

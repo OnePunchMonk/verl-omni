@@ -124,3 +124,31 @@ def test_dapo_dynamic_sampling_example_launcher_has_phase_three_contract():
     } <= settings
     # filter_groups requires the streaming (non-colocated) reward path.
     assert "reward.reward_model.enable=true" not in settings
+
+
+def test_dapo_mmk12_example_launcher_has_phase_four_contract():
+    repo_root = Path(__file__).parents[2]
+    launcher = (
+        repo_root / "examples/dapo_trainer/qwen3_omni/run_qwen3_omni_thinker_dapo_lora_mmk12_v1.sh"
+    ).read_text(encoding="utf-8")
+
+    settings = _script_settings(launcher)
+    # Same token-level DAPO policy contract as the AVQA dynamic sampling launcher.
+    assert set(DAPO_WITHOUT_DYNAMIC_SAMPLING_SETTINGS) - {"algorithm.filter_groups.enable=false"} <= settings
+    assert "actor_rollout_ref.actor.policy_loss.loss_mode=gspo" not in settings
+    assert ".*talker.*|.*code2wav.*|.*code_predictor.*|.*visual.*|.*audio_tower.*" in launcher
+    assert "actor_rollout_ref.actor.freeze_vision_tower=true" in settings
+    assert {
+        "algorithm.filter_groups.enable=true",
+        "algorithm.filter_groups.metric=acc",
+        "reward.reward_model.enable=false",
+        "reward.reward_manager.name=dapo",
+        "reward.custom_reward_function.path=verl_omni/utils/reward_score/mmk12_reward.py",
+        "reward.custom_reward_function.name=compute_score",
+        "reward.reward_kwargs.overlong_buffer_cfg.enable=true",
+        "reward.reward_kwargs.overlong_buffer_cfg.len=1024",
+        "reward.reward_kwargs.overlong_buffer_cfg.penalty_factor=1.0",
+        "reward.reward_kwargs.max_resp_len=12288",
+    } <= settings
+    assert 'TRAIN_FILE=${TRAIN_FILE:-"$HOME/data/mmk12/train.parquet"}' in launcher
+    assert 'VAL_FILE=${VAL_FILE:-"$HOME/data/mmk12/test.parquet"}' in launcher
