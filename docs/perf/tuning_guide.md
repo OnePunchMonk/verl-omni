@@ -1,7 +1,7 @@
 (tuning_guide)=
 # Performance Tuning Guide
 
-Last updated: 09/11/2026
+Last updated: 09/14/2026
 
 This page is the starting point for tuning a VeRL-Omni diffusion RL run. It
 does not repeat the detail already covered by the more specific pages —
@@ -105,6 +105,15 @@ Symptoms that show up regardless of which stage causes them:
 - If both offload flags are already `True`, confirm `layered_summon=True` —
   disabling it under offload tends to OOM during weight sync.
 
+**Step time dominated by data transfer between worker groups (video models)**
+- This shows up as idle GPU time between rollout and training rather than
+  inside either stage's compute, and is more likely on video/audio
+  generation where trajectories are larger than for image models. It's a V1
+  trainer (TransferQueue + ReplayBuffer) concern — see
+  [Diffusion V1 training](../start/diffusion_v1.md) for `sync` vs.
+  `separate_async` mode and how the replay buffer moves trajectories into
+  the training loop.
+
 **Step time dominated by reward scoring**
 - Confirm with a profiler trace (recipe 6 in [profiler.md](profiler.md)) before
   changing anything — reward cost is easy to misattribute to rollout because
@@ -125,8 +134,13 @@ Symptoms that show up regardless of which stage causes them:
 
 ## See also
 
-- [Profiling FlowGRPO / diffusion training](profiler.md)
+- [Profiling FlowGRPO / diffusion training](profiler.md) — has ready-to-run
+  recipes for the common cases (end-to-end trace, per-stage trace, memory
+  snapshot, rollout/reward server profiling) rather than just the config
+  reference
 - [Monitor Training with RL-Insight](../start/rl_insight.md)
+- [Diffusion V1 training](../start/diffusion_v1.md) — TransferQueue-based
+  trainer for video/audio recipes
 - {ref}`diffusion_mfu`
 - {ref}`rollout_batching`
 - [Async Reward](../algo/async_reward.md)
