@@ -120,11 +120,25 @@ def _sample_generated_frames(solution_image, num_frames: int) -> list[Image.Imag
     return video_tensor_to_pil_frames(video[indices])
 
 
+def _pooled_features(output):
+    """Unwrap the projected embedding tensor from a feature-extraction call.
+
+    ``CLIPModel.get_image_features`` / ``ClapModel.get_audio_features`` return a plain
+    tensor on some transformers versions and a ``BaseModelOutputWithPooling`` (embedding
+    in ``.pooler_output``) or a tuple on others -- normalize both to the tensor.
+    """
+    if torch.is_tensor(output):
+        return output
+    if hasattr(output, "pooler_output"):
+        return output.pooler_output
+    return output[0]
+
+
 def _clip_similarity(model, processor, device: str, reference_frames, generated_frames) -> float:
     reference_inputs = processor(images=reference_frames, return_tensors="pt").to(device)
     generated_inputs = processor(images=generated_frames, return_tensors="pt").to(device)
-    reference_embeds = F.normalize(model.get_image_features(**reference_inputs), p=2, dim=-1)
-    generated_embeds = F.normalize(model.get_image_features(**generated_inputs), p=2, dim=-1)
+    reference_embeds = F.normalize(_pooled_features(model.get_image_features(**reference_inputs)), p=2, dim=-1)
+    generated_embeds = F.normalize(_pooled_features(model.get_image_features(**generated_inputs)), p=2, dim=-1)
     reference_embed = F.normalize(reference_embeds.mean(dim=0), p=2, dim=-1)
     generated_embed = F.normalize(generated_embeds.mean(dim=0), p=2, dim=-1)
     return (reference_embed * generated_embed).sum().float().item()
@@ -167,7 +181,7 @@ def _clap_audio_similarity(model, processor, device: str, reference_waveforms, g
         return_tensors="pt",
     )
     inputs = {key: value.to(device) for key, value in inputs.items()}
-    embeds = F.normalize(model.get_audio_features(**inputs), p=2, dim=-1)
+    embeds = F.normalize(_pooled_features(model.get_audio_features(**inputs)), p=2, dim=-1)
     reference_embed = F.normalize(embeds[:-1].mean(dim=0), p=2, dim=-1)
     generated_embed = embeds[-1]
     return (reference_embed * generated_embed).sum().float().item()
