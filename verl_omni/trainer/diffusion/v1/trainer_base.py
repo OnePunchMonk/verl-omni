@@ -1663,11 +1663,7 @@ class PolicyGradientDiffusionTrainerV1(ABC):
         gradient_norm = metrics.get("actor/grad_norm", None)
         if "advantages" in data.batch:
             metrics.update(compute_variance_proxy_metrics(batch=data, gradient_norm=gradient_norm))
-        self._nonfinite_grad_streak = track_nonfinite_grad_streak(
-            self._nonfinite_grad_streak,
-            gradient_norm,
-            self.config.trainer.get("max_consecutive_nonfinite_grad_steps", 0),
-        )
+        self._nonfinite_grad_streak = track_nonfinite_grad_streak(self._nonfinite_grad_streak, gradient_norm)
         metrics["train/nonfinite_grad_steps"] = self._nonfinite_grad_streak
 
         # off-policy staleness metrics (model-version units)

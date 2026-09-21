@@ -15,42 +15,27 @@
 
 import math
 
-import pytest
-
 from verl_omni.trainer.diffusion.diffusion_trainer_utils import track_nonfinite_grad_streak
 
 
 class TestTrackNonfiniteGradStreak:
     def test_finite_grad_norm_resets_streak(self):
-        assert track_nonfinite_grad_streak(streak=3, grad_norm=1.5, max_consecutive=5) == 0
+        assert track_nonfinite_grad_streak(streak=3, grad_norm=1.5) == 0
 
     def test_none_grad_norm_resets_streak(self):
-        assert track_nonfinite_grad_streak(streak=3, grad_norm=None, max_consecutive=5) == 0
+        assert track_nonfinite_grad_streak(streak=3, grad_norm=None) == 0
 
     def test_non_finite_grad_norm_increments_streak(self):
-        assert track_nonfinite_grad_streak(streak=0, grad_norm=float("nan"), max_consecutive=5) == 1
-        assert track_nonfinite_grad_streak(streak=1, grad_norm=float("inf"), max_consecutive=5) == 2
+        assert track_nonfinite_grad_streak(streak=0, grad_norm=float("nan")) == 1
+        assert track_nonfinite_grad_streak(streak=1, grad_norm=float("inf")) == 2
 
-    def test_disabled_threshold_never_raises(self):
-        streak = 0
-        for _ in range(100):
-            streak = track_nonfinite_grad_streak(streak, math.nan, max_consecutive=0)
-        assert streak == 100
-
-    def test_raises_once_streak_reaches_threshold(self):
+    def test_intervening_finite_step_resets_streak(self):
         streak = 0
         for _ in range(2):
-            streak = track_nonfinite_grad_streak(streak, math.nan, max_consecutive=3)
+            streak = track_nonfinite_grad_streak(streak, math.nan)
         assert streak == 2
-        with pytest.raises(RuntimeError, match="non-finite"):
-            track_nonfinite_grad_streak(streak, math.nan, max_consecutive=3)
-
-    def test_intervening_finite_step_prevents_abort(self):
-        streak = 0
-        for _ in range(2):
-            streak = track_nonfinite_grad_streak(streak, math.nan, max_consecutive=3)
-        streak = track_nonfinite_grad_streak(streak, 2.0, max_consecutive=3)
+        streak = track_nonfinite_grad_streak(streak, 2.0)
         assert streak == 0
         for _ in range(2):
-            streak = track_nonfinite_grad_streak(streak, math.nan, max_consecutive=3)
+            streak = track_nonfinite_grad_streak(streak, math.nan)
         assert streak == 2

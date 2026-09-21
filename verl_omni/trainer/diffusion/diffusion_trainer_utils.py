@@ -67,18 +67,11 @@ def worker_group_port_ranges(master_port_range: Optional[Sequence[int]], num_gro
     return [[lo + i * stride, hi if i == num_groups - 1 else lo + (i + 1) * stride] for i in range(num_groups)]
 
 
-def track_nonfinite_grad_streak(streak: int, grad_norm: Optional[float], max_consecutive: int) -> int:
-    """Update the consecutive-non-finite-gradient streak, raising past ``max_consecutive`` (<= 0 disables)."""
+def track_nonfinite_grad_streak(streak: int, grad_norm: Optional[float]) -> int:
+    """Update the consecutive-non-finite-gradient streak, for visibility only (see #388 item A3)."""
     if grad_norm is None or math.isfinite(grad_norm):
         return 0
-    streak += 1
-    if max_consecutive > 0 and streak >= max_consecutive:
-        raise RuntimeError(
-            f"grad_norm has been non-finite for {streak} consecutive optimizer steps "
-            f"(trainer.max_consecutive_nonfinite_grad_steps={max_consecutive}); aborting instead of "
-            "continuing to silently skip optimizer steps."
-        )
-    return streak
+    return streak + 1
 
 
 def validate_distillation_config(config) -> None:
