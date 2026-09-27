@@ -1,6 +1,6 @@
 # Diffusion V1 training
 
-Last updated: 09/21/2026
+Last updated: 09/24/2026
 
 This guide runs the diffusion V1 trainer in synchronous or separate-asynchronous
 mode using the provided Stable Diffusion 3.5 Medium FlowGRPO OCR recipes.
@@ -197,6 +197,26 @@ Logged metrics: `timing_s/switch_wait`, `timing_s/switch_to_rollout`,
 `timing_s/switch_to_trainer`, `separate_async/switch/*`, and
 `separate_async/decision/*`.
 
+This is the v1 analog of verl's fully_async_policy
+`DynamicResourceController` (verl#6556). That controller is not wired on
+`main_diffusion_v1`; setting `async_training.use_dynamic_resource_scheduling=true`
+raises at startup.
+
+### Checkpoint recovery
+
+Separate-async checkpoints save TransferQueue next to the actor and
+dataloader (`global_step_N/transfer_queue/`). Resume with
+`trainer.resume_mode=auto` (or `resume_path`) restores queued prompt groups,
+re-issues pending and running groups, and tops warmup up to
+`num_warmup_batches * train_batch_size` instead of enqueueing that many new
+batches. Requires TransferQueue 0.1.9. Sync mode does not write a queue
+snapshot. Old checkpoints without `transfer_queue/` warn and start the queue
+empty.
+
+Streaming refill already uses `data.gen_batch_size=1` in `separate_async`
+(and whenever exact incomplete-group refill is on). Do not set a larger
+`gen_batch_size` expecting it to stick; the trainer overrides it.
+
 Throughput metrics of every `separate_async` run, with switching on or off, now
 also count the standalone rollout GPUs in the denominator, so they read lower
 than earlier runs of the same recipe.
@@ -217,12 +237,7 @@ TransferQueue (pip package `TransferQueue`, imported as `transfer_queue`) is the
 streaming queue the V1 control plane uses to hand rollout data to the trainer.
 Every V1 diffusion run depends on it:
 
-1. **Install.** TransferQueue must be importable in the environment that
-   launches Ray *and* in every Ray worker. CI pins `pip install
-   TransferQueue==0.1.9`; use the same version unless a newer one is announced.
-   The import check in [Prerequisites](#prerequisites) fails fast when it is
-   missing.
-2. **Force-enabled lifecycle.** The yaml default `transfer_queue.enable` is
+1. **Force-enabled lifecycle.** The yaml default `transfer_queue.enable` is
    `false`, but a V1 launch force-sets it to `true` before `ray.init()` — a V1
    run cannot start without TransferQueue. `ray.init` then exports
    `TRANSFER_QUEUE_ENABLE=1` through the Ray runtime env so all workers join the
@@ -230,17 +245,17 @@ Every V1 diffusion run depends on it:
    … `tq.close()`. If Ray workers report `ModuleNotFoundError: No module named
    'transfer_queue'`, stop the cluster (`ray stop`) and relaunch from the
    environment where TransferQueue is installed.
-3. **Rollout-side producer.** The diffusion agent loop ships a TransferQueue
+2. **Rollout-side producer.** The diffusion agent loop ships a TransferQueue
    writer (`diffusion_agent_loop_tq.py`) that serializes each finished rollout
    session — prompts, latents, rewards, and an explicit allowlist of extra
    fields (e.g. `img_shapes` for Qwen-Image 2D RoPE). The allowlist is
    intentional: silently forwarding unknown fields has broken metadata before,
    so new fields must be added there explicitly.
-4. **Trainer-side consumer.** The trainer converts queued rows back to
+3. **Trainer-side consumer.** The trainer converts queued rows back to
    `DataProto` batches (`tq_utils.diffusion_tq_batch_to_dataproto`) and feeds
    them to the ReplayBuffer, which drives `sync` batching, staleness eviction,
    and `separate_async` partial rollout.
-5. **Tuning.** `transfer_queue.backend.SimpleStorage.total_storage_size` caps
+4. **Tuning.** `transfer_queue.backend.SimpleStorage.total_storage_size` caps
    how many experience samples the default backend holds;
    `num_data_storage_units` sets the in-memory storage units; metrics can be
    exposed via `transfer_queue.metrics.*`. See [Important settings](#important-settings).
@@ -305,14 +320,9 @@ trainer.v1.trainer_mode=sync
 
 Batch math is unchanged for `sync`; `separate_async` adds the
 `train_batch_size = parameter_sync_step * ppo_mini_batch_size` identity
-described above. Install TransferQueue as described in
-[Prerequisites](#prerequisites) before the first V1 launch.
+described above.
 
 ## Troubleshooting
-
-`ModuleNotFoundError: No module named 'transfer_queue'`
-: Install TransferQueue in the same environment used to launch Ray, then run
-  the import verification command above.
 
 Ray workers cannot import `transfer_queue`
 : Stop the existing Ray cluster with `ray stop`, activate the environment where
