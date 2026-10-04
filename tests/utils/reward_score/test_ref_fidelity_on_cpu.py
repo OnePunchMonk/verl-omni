@@ -140,13 +140,32 @@ def test_reference_visual_frames_decodes_reference_videos(monkeypatch, tmp_path)
     raw_frames = [np.full((4, 4, 3), 255, dtype=np.uint8) for _ in range(5)]
 
     fake_iio = ModuleType("imageio.v3")
-    fake_iio.imiter = lambda path, plugin: iter(raw_frames)
+    seen_plugins = []
+
+    def _imiter(path, plugin):
+        seen_plugins.append(plugin)
+        return iter(raw_frames)
+
+    fake_iio.imiter = _imiter
     monkeypatch.setitem(sys.modules, "imageio", ModuleType("imageio"))
     monkeypatch.setitem(sys.modules, "imageio.v3", fake_iio)
 
     frames = ref_fidelity._reference_visual_frames({"source_videos": [str(video_path)]}, frames_per_video=2)
 
     assert len(frames) == 2
+    assert seen_plugins == ["ffmpeg"]
+
+
+def test_compute_score_rejects_invalid_audio_weight():
+    with pytest.raises(ValueError, match="audio_weight"):
+        ref_fidelity.compute_score_ref_fidelity(
+            data_source="minimax_h3_ref2va",
+            solution_image=None,
+            ground_truth="",
+            extra_info={},
+            device="cpu",
+            audio_weight=1.1,
+        )
 
 
 def test_sample_generated_frames_rejects_missing_solution():

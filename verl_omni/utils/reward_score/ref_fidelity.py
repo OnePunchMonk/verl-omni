@@ -85,7 +85,10 @@ def _as_path_list(value) -> list[str]:
 def _decode_video_frames(path: str, num_frames: int) -> list[Image.Image]:
     import imageio.v3 as iio
 
-    frames = [Image.fromarray(frame) for frame in iio.imiter(path, plugin="pyav")]
+    # The project declares imageio[ffmpeg].  Do not select the optional PyAV
+    # plugin here: it is not installed by that extra and would make every
+    # video-reference row fail at runtime.
+    frames = [Image.fromarray(frame) for frame in iio.imiter(path, plugin="ffmpeg")]
     if not frames:
         raise ValueError(f"Reference video has no frames: {path}")
     sample_count = max(1, min(num_frames, len(frames)))
@@ -202,6 +205,8 @@ def compute_score_ref_fidelity(
 ) -> dict:
     """Blend CLIP visual reference fidelity with CLAP audio reference fidelity, when available."""
     del data_source, ground_truth, kwargs
+    if not 0.0 <= audio_weight <= 1.0:
+        raise ValueError(f"audio_weight must be between 0 and 1, got {audio_weight}.")
     device = device or get_device_name()
 
     reference_frames = _reference_visual_frames(extra_info, frames_per_reference_video)
