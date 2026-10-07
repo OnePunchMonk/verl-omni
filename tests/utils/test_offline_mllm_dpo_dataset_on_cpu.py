@@ -256,6 +256,40 @@ def test_build_preference_branch_appends_inline_media_missing_from_top_level():
     assert branch["images"] == ["/tmp/a.png", "/tmp/b.png"]
 
 
+def test_build_preference_branch_orders_media_by_prompt_tokens():
+    sample = {
+        "prompt": [
+            {
+                "role": "user",
+                "content": [
+                    _content_item("image", image="/tmp/b.png"),
+                    _content_item("image", image="/tmp/a.png"),
+                    _content_item("text", text="Which is brighter?"),
+                ],
+            }
+        ],
+        "chosen": "answer A",
+        "images": ["/tmp/a.png"],
+    }
+    branch = dataset_mod._build_preference_branch(sample, sample["chosen"])
+
+    assert branch["images"] == ["/tmp/b.png", "/tmp/a.png"]
+
+
+def test_build_preference_branch_orders_placeholder_after_inline_media():
+    sample = {
+        "prompt": [
+            {"role": "user", "content": [_content_item("image", image="/tmp/b.png")]},
+            {"role": "user", "content": "<image>What is this?"},
+        ],
+        "chosen": "answer A",
+        "images": ["/tmp/a.png"],
+    }
+    branch = dataset_mod._build_preference_branch(sample, sample["chosen"])
+
+    assert branch["images"] == ["/tmp/b.png", "/tmp/a.png"]
+
+
 def test_pair_branch_values_keeps_chosen_rejected_branches_separate():
     chosen = {"input_ids": torch.tensor([1, 2]), "labels": torch.tensor([3, 4])}
     rejected = {"input_ids": torch.tensor([5]), "labels": torch.tensor([7])}
