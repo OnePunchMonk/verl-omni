@@ -134,26 +134,67 @@ def test_reference_visual_frames_accepts_single_image_path(tmp_path):
     assert frames[0].getpixel((0, 0)) == (255, 0, 0)
 
 
-def test_reference_visual_frames_decodes_reference_videos(monkeypatch, tmp_path):
-    video_path = tmp_path / "ref.mp4"
-    video_path.write_bytes(b"not a real video, decoding is mocked")
-    raw_frames = [np.full((4, 4, 3), 255, dtype=np.uint8) for _ in range(5)]
-
-    fake_iio = ModuleType("imageio.v3")
+def _mock_video_decoding(monkeypatch, raw_frames, frame_count=None):
+    pulled = []
     seen_plugins = []
 
     def _imiter(path, plugin):
         seen_plugins.append(plugin)
-        return iter(raw_frames)
+        for index, frame in enumerate(raw_frames):
+            pulled.append(index)
+            yield frame
 
+    fake_iio = ModuleType("imageio.v3")
     fake_iio.imiter = _imiter
+    fake_ffmpeg = ModuleType("imageio_ffmpeg")
+    fake_ffmpeg.count_frames_and_secs = lambda path: (len(raw_frames) if frame_count is None else frame_count, 1.0)
     monkeypatch.setitem(sys.modules, "imageio", ModuleType("imageio"))
     monkeypatch.setitem(sys.modules, "imageio.v3", fake_iio)
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", fake_ffmpeg)
+    return pulled, seen_plugins
+
+
+def test_reference_visual_frames_decodes_reference_videos(monkeypatch, tmp_path):
+    video_path = tmp_path / "ref.mp4"
+    video_path.write_bytes(b"not a real video, decoding is mocked")
+    raw_frames = [np.full((4, 4, 3), value, dtype=np.uint8) for value in range(5)]
+    _, seen_plugins = _mock_video_decoding(monkeypatch, raw_frames)
 
     frames = ref_fidelity._reference_visual_frames({"source_videos": [str(video_path)]}, frames_per_video=2)
 
-    assert len(frames) == 2
-    assert seen_plugins == ["ffmpeg"]
+    assert [frame.getpixel((0, 0))[0] for frame in frames] == [0, 4]
+    assert seen_plugins == ["FFMPEG"]
+
+
+def test_decode_video_frames_stops_after_last_sampled_frame(monkeypatch):
+    raw_frames = [np.full((4, 4, 3), value, dtype=np.uint8) for value in range(9)]
+    pulled, _ = _mock_video_decoding(monkeypatch, raw_frames)
+
+    frames = ref_fidelity._decode_video_frames("ref.mp4", num_frames=3)
+
+    assert [frame.getpixel((0, 0))[0] for frame in frames] == [0, 4, 8]
+    assert pulled == list(range(9))
+
+    pulled.clear()
+    frames = ref_fidelity._decode_video_frames("ref.mp4", num_frames=1)
+    assert [frame.getpixel((0, 0))[0] for frame in frames] == [0]
+    assert pulled == [0]
+
+
+def test_decode_video_frames_falls_back_when_count_overshoots(monkeypatch):
+    raw_frames = [np.full((4, 4, 3), value, dtype=np.uint8) for value in range(3)]
+    _mock_video_decoding(monkeypatch, raw_frames, frame_count=5)
+
+    frames = ref_fidelity._decode_video_frames("ref.mp4", num_frames=2)
+
+    assert [frame.getpixel((0, 0))[0] for frame in frames] == [0, 2]
+
+
+def test_decode_video_frames_rejects_empty_video(monkeypatch):
+    _mock_video_decoding(monkeypatch, [], frame_count=0)
+
+    with pytest.raises(ValueError, match="no frames"):
+        ref_fidelity._decode_video_frames("ref.mp4", num_frames=2)
 
 
 def test_compute_score_rejects_invalid_audio_weight():

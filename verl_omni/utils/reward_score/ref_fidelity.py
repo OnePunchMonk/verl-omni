@@ -84,16 +84,34 @@ def _as_path_list(value) -> list[str]:
 
 def _decode_video_frames(path: str, num_frames: int) -> list[Image.Image]:
     import imageio.v3 as iio
+    from imageio_ffmpeg import count_frames_and_secs
 
+    # Count first (ffmpeg decodes to null, nothing is held in Python), then stream
+    # and keep only the sampled frames so long references are never fully in memory.
+    frame_count, _ = count_frames_and_secs(path)
+    if frame_count <= 0:
+        raise ValueError(f"Reference video has no frames: {path}")
+    sample_count = max(1, min(num_frames, frame_count))
+    indices = torch.linspace(0, frame_count - 1, sample_count).round().long().tolist()
+
+    wanted = set(indices)
+    selected = {}
+    last_frame = None
     # The project declares imageio[ffmpeg].  Do not select the optional PyAV
     # plugin here: it is not installed by that extra and would make every
-    # video-reference row fail at runtime.
-    frames = [Image.fromarray(frame) for frame in iio.imiter(path, plugin="ffmpeg")]
-    if not frames:
+    # video-reference row fail at runtime.  imageio v3 registers the legacy
+    # plugin as "FFMPEG"; lowercase "ffmpeg" is rejected.
+    for index, frame in enumerate(iio.imiter(path, plugin="FFMPEG")):
+        last_frame = frame
+        if index in wanted:
+            selected[index] = Image.fromarray(frame)
+        if index >= indices[-1]:
+            break
+    if last_frame is None:
         raise ValueError(f"Reference video has no frames: {path}")
-    sample_count = max(1, min(num_frames, len(frames)))
-    indices = torch.linspace(0, len(frames) - 1, sample_count).round().long().tolist()
-    return [frames[index] for index in indices]
+    # The container frame count can overshoot what ffmpeg decodes; fall back to the last frame.
+    fallback = Image.fromarray(last_frame)
+    return [selected.get(index, fallback) for index in indices]
 
 
 def _reference_visual_frames(extra_info: dict, frames_per_video: int) -> list[Image.Image]:
