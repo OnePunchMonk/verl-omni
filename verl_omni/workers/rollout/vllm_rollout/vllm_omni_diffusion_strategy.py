@@ -14,17 +14,19 @@
 import logging
 from argparse import Namespace
 from collections.abc import Mapping
+from dataclasses import asdict
 from typing import Any, Optional
 
 import numpy as np
 import torch
 import torchvision.transforms as T
 from verl.utils.import_utils import import_external_libs
-from vllm_omni.inputs.data import OmniCustomPrompt, OmniDiffusionSamplingParams
+from vllm_omni.inputs.data import OmniDiffusionSamplingParams
 from vllm_omni.lora.request import LoRARequest
 
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.rollout_media import DiffusionIOSpec
+from verl_omni.pipelines.rollout_request import OmniRolloutRequest
 from verl_omni.workers.config import DiffusionModelConfig, DiffusionRolloutConfig
 from verl_omni.workers.rollout.replica import DiffusionOutput
 from verl_omni.workers.rollout.vllm_rollout.vllm_omni_strategy_base import OmniStrategyBase
@@ -101,6 +103,86 @@ class DiffusionStrategy(OmniStrategyBase):
         return _GPU_WORKER_EXTENSION
 
     def prepare_engine_args(self, engine_args: dict[str, Any], args: Namespace) -> None:
+        config = self.server.config
+        parallel_config = engine_args.get("parallel_config")
+        if parallel_config is not None:
+            parallel_config = dict(parallel_config) if isinstance(parallel_config, Mapping) else asdict(parallel_config)
+
+        # Resource-bearing degrees must agree with the config used by verl's allocator.
+        topology = {
+            "tensor_parallel_size": config.tensor_model_parallel_size,
+            "ulysses_degree": config.ulysses_degree,
+            "ring_degree": config.ring_degree,
+            "sequence_parallel_size": config.ulysses_degree * config.ring_degree,
+            "data_parallel_size": config.data_parallel_size,
+            "pipeline_parallel_size": config.pipeline_model_parallel_size,
+        }
+        explicit_kwargs = {
+            key.replace("-", "_"): value for key, value in (config.engine_kwargs.get("vllm_omni", {}) or {}).items()
+        }
+        for key, value in topology.items():
+            cli_value = getattr(args, key, None)
+            nested_value = (parallel_config or {}).get(key)
+            aliases = {"ulysses_degree": "usp", "ring_degree": "ring"}
+            explicit = key in explicit_kwargs or aliases.get(key) in explicit_kwargs
+            if (cli_value is not None and cli_value != value and (explicit or cli_value != 1)) or (
+                nested_value is not None and nested_value != value
+            ):
+                raise ValueError(
+                    f"Conflicting {key}; configure topology through actor_rollout_ref.rollout, not engine_kwargs."
+                )
+            engine_args[key] = value
+            if parallel_config is not None:
+                parallel_config[key] = value
+
+        for key, default in (("vae_patch_parallel_size", 1), ("vae_parallel_mode", "tile"), ("vae_use_tiling", False)):
+            value = getattr(config, key)
+            cli_value = getattr(args, key, None)
+            if cli_value is not None and (cli_value != default or key in explicit_kwargs):
+                if value not in (default, cli_value):
+                    raise ValueError(f"Conflicting {key} in rollout config and engine_kwargs.")
+                value = cli_value
+            if key != "vae_use_tiling" and parallel_config is not None:
+                nested_value = parallel_config.get(key)
+                if nested_value is not None and (nested_value != getattr(config, key) or nested_value != value):
+                    raise ValueError(f"Conflicting {key} in rollout config and parallel_config.")
+                parallel_config[key] = value
+            engine_args[key] = value
+
+        # TODO(vllm-omni#7564): Drop this pin-compat shim; tracked in verl-omni#445.
+        text_encoder_tp = config.text_encoder_tp_size
+        cli_text_encoder_tp = getattr(args, "text_encoder_tp_size", None)
+        if cli_text_encoder_tp is not None:
+            if text_encoder_tp not in (1, cli_text_encoder_tp):
+                raise ValueError("Conflicting text_encoder_tp_size in rollout config and engine_kwargs.")
+            text_encoder_tp = cli_text_encoder_tp
+
+        dit_world_size = config.tensor_model_parallel_size * config.ulysses_degree * config.ring_degree
+        if parallel_config is not None:
+            nested_text_encoder_tp = parallel_config.get("text_encoder_tp_size")
+            if nested_text_encoder_tp is not None:
+                if nested_text_encoder_tp != text_encoder_tp and (
+                    cli_text_encoder_tp is not None or text_encoder_tp != 1
+                ):
+                    raise ValueError("Conflicting text_encoder_tp_size in rollout/engine_kwargs and parallel_config.")
+                text_encoder_tp = nested_text_encoder_tp
+
+        if text_encoder_tp < 1 or text_encoder_tp not in (1, dit_world_size):
+            raise ValueError(f"text_encoder_tp_size must be 1 or equal to DiT group size ({dit_world_size}).")
+        engine_args["text_encoder_tp_size"] = text_encoder_tp
+        if config.ulysses_degree * config.ring_degree > 1:
+            for key in ("cfg_parallel_size", "allgather_degree"):
+                value = (parallel_config or {}).get(key, getattr(args, key, None))
+                if value not in (None, 1):
+                    raise ValueError(f"Rollout sequence parallelism requires {key}=1.")
+            num_gpus = engine_args.get("num_gpus")
+            if num_gpus not in (None, dit_world_size):
+                raise ValueError(f"num_gpus must match the allocated DiT group size ({dit_world_size}).")
+            engine_args["num_gpus"] = dit_world_size
+        if parallel_config is not None:
+            parallel_config["text_encoder_tp_size"] = text_encoder_tp
+            engine_args["parallel_config"] = parallel_config
+
         import_external_libs(self.server.config.external_lib)
 
         pipeline_path = VllmOmniPipelineBase.get_pipeline_path(
@@ -134,35 +216,16 @@ class DiffusionStrategy(OmniStrategyBase):
 
     def preprocess_input(
         self,
-        prompt_ids: list[int],
+        request: OmniRolloutRequest,
         sampling_params: dict[str, Any],
-        multi_modal_data: dict[str, Any],
         lora_request: Optional[LoRARequest],
-        negative_prompt_ids: Optional[list[int]],
-        prompt_mask: torch.BoolTensor | None = None,
-        mm_processor_kwargs: Optional[dict[str, Any]] = None,
-        extra_prompt_ids: Optional[dict[str, list[int]]] = None,
-        negative_extra_prompt_ids: Optional[dict[str, list[int]]] = None,
-    ) -> tuple[OmniCustomPrompt, list[Any]]:
+    ) -> tuple[dict[str, Any], list[Any]]:
         default_params_list = self.server.engine.default_sampling_params_list
-
-        custom_prompt: OmniCustomPrompt = {"prompt_token_ids": prompt_ids}
-        if prompt_mask is not None:
-            custom_prompt["prompt_mask"] = prompt_mask
-        if len(default_params_list) > 1:
+        custom_prompt = dict(request.to_diffusion_prompt())
+        if self.server.engine.engine.get_stage_metadata(0).stage_type != "diffusion":
+            # Match AsyncOmniEngine's stage-0 preprocessing gate, independently of stage count.
+            custom_prompt["prompt_token_ids"] = custom_prompt.pop("prompt_ids")
             custom_prompt["modalities"] = ["image"]
-        if negative_prompt_ids is not None:
-            custom_prompt["negative_prompt_ids"] = negative_prompt_ids
-        if extra_prompt_ids is not None:
-            custom_prompt["extra_prompt_ids"] = extra_prompt_ids
-        if negative_extra_prompt_ids is not None:
-            custom_prompt["negative_extra_prompt_ids"] = negative_extra_prompt_ids
-        if multi_modal_data:
-            custom_prompt["multi_modal_data"] = multi_modal_data
-            custom_prompt["extra_args"] = {"multi_modal_data": multi_modal_data}
-        if mm_processor_kwargs:
-            # Reference fps / sampling_rate must reach the pipeline (mirrors ARStrategy).
-            custom_prompt["mm_processor_kwargs"] = mm_processor_kwargs
 
         sampling_kwargs: dict[str, Any] = {}
         extra_args: dict[str, Any] = {}
@@ -186,6 +249,8 @@ class DiffusionStrategy(OmniStrategyBase):
         lora_request: Optional[LoRARequest],
         priority: int,
     ) -> Any:
+        if priority != 0:
+            raise ValueError("DiffusionStrategy does not support nonzero request priority")
         return await self._collect_last_output(
             self.server.engine.generate(
                 prompt=prompt,
@@ -197,9 +262,8 @@ class DiffusionStrategy(OmniStrategyBase):
     def _diffusion_io_spec(self) -> Optional[DiffusionIOSpec]:
         """Resolve the adapter-declared media I/O spec for the active pipeline.
 
-        The spec lets a diffusion adapter declare its auxiliary media streams
-        (e.g. joint audio and its sample rate) so this strategy does not have to
-        hard-code model-specific tuple positions or sample rates. Returns
+        The spec declares primary modality and the optional joint audio stream's
+        sample rate. The current transport fixes audio at tuple position 1. Returns
         ``None`` when the pipeline (or a bare test server) declares no spec.
         """
         model_config = getattr(self.server, "model_config", None)
@@ -243,15 +307,29 @@ class DiffusionStrategy(OmniStrategyBase):
                     diffusion_output = diffusion_output[key]
                     break
         io_spec = self._diffusion_io_spec()
+        req_output = getattr(final_res, "request_output", None) or final_res
+        request_id = getattr(req_output, "request_id", getattr(final_res, "request_id", "unknown"))
+        model_config = getattr(self.server, "model_config", None)
+        context = (
+            f"pipeline={getattr(model_config, 'architecture', 'unknown')}/"
+            f"{getattr(model_config, 'algorithm', 'unknown')}, request_id={request_id}"
+        )
         audio_sample_rate: Optional[int] = None
         rollout_audio: Any = None
         if isinstance(diffusion_output, tuple | list):
+            expected_streams = 1 + len(io_spec.auxiliary) if io_spec is not None else None
+            if len(diffusion_output) not in (1, 2) or (
+                expected_streams is not None and len(diffusion_output) != expected_streams
+            ):
+                raise ValueError(
+                    f"Unsupported diffusion media tuple ({context}): expected "
+                    f"{expected_streams if expected_streams is not None else '1 or 2'} streams, "
+                    f"got {len(diffusion_output)}"
+                )
             rollout_audio = diffusion_output[1] if len(diffusion_output) > 1 else None
             diffusion_output = diffusion_output[0]
-            if io_spec is not None:
-                audio_spec = next((spec for spec in io_spec.auxiliary if spec.modality == "audio"), None)
-                if audio_spec is not None:
-                    audio_sample_rate = audio_spec.sample_rate
+            if io_spec is not None and io_spec.auxiliary:
+                audio_sample_rate = io_spec.auxiliary[0].sample_rate
         if output_type == "latent":
             diffusion_output = torch.as_tensor(diffusion_output).float()
         else:
@@ -283,8 +361,16 @@ class DiffusionStrategy(OmniStrategyBase):
             # default lives in this shared strategy.
             if audio_sample_rate is not None:
                 extra_fields.setdefault("audio_sample_rate", audio_sample_rate)
+        # Surface the adapter-declared primary media kind so downstream consumers
+        # read the modality instead of inferring it from the response tensor rank.
+        if io_spec is not None:
+            runtime_kind = extra_fields.get("media_kind")
+            if runtime_kind is not None and runtime_kind != io_spec.primary.modality:
+                raise ValueError(
+                    f"Conflicting media_kind ({context}): expected {io_spec.primary.modality!r}, got {runtime_kind!r}"
+                )
+            extra_fields["media_kind"] = io_spec.primary.modality
 
-        req_output = getattr(final_res, "request_output", None) or final_res
         if hasattr(req_output, "outputs") and req_output.outputs:
             finish_reason = req_output.outputs[0].finish_reason or "stop"
         elif hasattr(req_output, "finish_reason"):

@@ -1,8 +1,6 @@
 # Welcome to VeRL-Omni's documentation!
 
-<!-- 2026-09-02, tianqi, add NPU install page to Getting Started toctree -->
-Last updated: 09/02/2026
-<!-- end -->
+Last updated: 10/06/2026
 
 [VeRL-Omni](https://github.com/verl-project/verl-omni) is a general RL training framework focused on multimodal generative models, built on top of [verl](https://github.com/verl-project/verl). It originated from the multi-modal generation RL effort in `verl`, and now has a dedicated home so it can evolve in a more focused way.
 
@@ -19,24 +17,26 @@ VeRL-Omni targets RL post-training for three families of generative models:
 - **Specialized rollout** via [vLLM-Omni](https://github.com/vllm-project/vllm-omni) for high-throughput diffusion and multimodal generation.
 - **Flexible reward pipelines** spanning rule-based rewards, model-based rewards, and multimodal reward computation.
 - **Modular training backends** that plug into existing parallelism (FSDP, USP) and other optimizations rather than rebuilding the stack from scratch.
-- **End-to-end examples and benchmarks** validating co-located sync and fully-async RL on the model families above.
+- **End-to-end examples and benchmarks** validating co-located sync and separate-async RL on the model families above.
 - **High training throughput** — on our reference Qwen-Image FlowGRPO setup, VeRL-Omni achieves **up to ~25% higher end-to-end throughput** than the diffusers-based [`flow_grpo`](https://github.com/yifan123/flow_grpo) reference implementation, driven by vLLM-Omni rollout, FSDP/USP training, and asynchronous reward computation on a dedicated GPU pool.
 
 See {doc}`start/models` for the full model catalogue and which algorithms run on each model.
 
-<!-- 2026-09-02, tianqi, list NPU install next to GPU install in Getting Started -->
 ```{toctree}
 :maxdepth: 2
 :caption: Getting Started
 
 start/install.md
+start/engine_backends.md
 start/install_npu.md
+start/install_rocm.md
 start/models.md
 start/flowgrpo_quickstart.md
+start/diffusion_v1.md
 start/multi_node_training.md
+start/model_merger.md
 start/metrics.md
 ```
-<!-- end -->
 
 ```{toctree}
 :maxdepth: 1
@@ -50,10 +50,12 @@ examples/config.md
 :caption: Advanced Features
 
 algo/async_reward.md
+algo/named_reward_models.md
 algo/rollout_correction.md
+algo/separate_async_omni.md
 start/rollout_batching.md
 start/http_scorer.md
-start/diffusion_v1.md
+start/rl_insight.md
 ```
 
 ```{toctree}
@@ -67,37 +69,49 @@ algo/diffusionnft.md
 algo/grpo_guard.md
 algo/mixgrpo.md
 algo/diffusion_opd.md
+algo/omni_opd.md
+algo/deterministic_post_training.md
 algo/performance.md
 ```
 
+<!-- Examples grouped by task: overview router, image-generation algorithm
+     pages, per-model image pages, video/audio, unified multimodal,
+     omni-modality. The check_example_docs_symlinks sanity test requires every
+     symlinked example page to stay inside this single toctree. -->
 ```{toctree}
 :maxdepth: 2
 :caption: Examples
 
+examples/overview.md
 examples/flowgrpo_trainer.md
 examples/flowdppo_trainer.md
 examples/dpo_trainer.md
-examples/dapo_trainer.md
 examples/dancegrpo_trainer.md
 examples/flux1/dancegrpo_trainer_flux1.md
-examples/diffusionnft_trainer.md
 examples/grpoguard_trainer.md
-examples/gspo_trainer.md
 examples/mixgrpo_trainer.md
+examples/diffusionnft_trainer.md
 examples/diffusionopd_trainer.md
 examples/flowgrpo_trainer_sd35_drm.md
-examples/bagel/flowgrpo_trainer_bagel.md
+examples/qwen_image/flowgrpo_trainer_qwen_image.md
 examples/qwen_image_edit/flowgrpo_trainer_qwen_image_edit.md
 examples/ltx2/flowgrpo_trainer_ltx2.md
+examples/minimax_h3/flowgrpo_trainer_minimax_h3.md
 examples/minimax_h3/diffusionnft_trainer_minimax_h3.md
 examples/boogu_image/flowgrpo_trainer_boogu_image.md
-examples/minimax_h3/flowgrpo_trainer_minimax_h3.md
+examples/boogu_image/diffusionnft_trainer_boogu_image.md
+examples/bagel/flowgrpo_trainer_bagel.md
+examples/gspo_trainer.md
+examples/qwen3_omni/gspo_trainer_qwen3_omni.md
+examples/dapo_trainer.md
+examples/qwen3_tts/grpo_trainer_qwen3_tts.md
 ```
 
 ```{toctree}
 :maxdepth: 1
 :caption: Performance Tuning Guide
 
+perf/tuning_guide.md
 perf/diffusion_mfu.md
 perf/profiler.md
 ```
@@ -137,7 +151,15 @@ contributing/integrating_a_stepwise_continuous_batching_model.md
 contributing/integrating_a_new_policy_gradient_algorithm_for_diffusion_model.md
 contributing/integrating_a_new_direct_preference_algorithm_for_diffusion_model.md
 contributing/gpu_smoke_tests.md
+contributing/npu_smoke_tests.md
 contributing/common_pitfalls.md
+```
+
+```{toctree}
+:maxdepth: 1
+:caption: Community
+
+community/governance.md
 ```
 
 ## Contribution
@@ -194,7 +216,10 @@ the matching checks:
 | `ci-core` | Core GPU smoke (2 GPUs) (training, reward, rollout modules) |
 | `ci-e2e-omni` | Omni trainer e2e GPU smoke (2 GPUs) |
 | `ci-e2e-diffusion` | Diffusion trainer e2e GPU smoke (4 GPUs) |
-| `ready-for-ci` | Selective GPU smoke suite in parallel (Up to 8 GPUs) |
+| `ready-for-ci` | Selective GPU smoke suite in parallel (Up to 8 GPUs), plus the full NPU smoke suite when the PR matches the NPU path filter |
+| `ci-npu` | Full NPU smoke suite (8 NPUs) |
+| `ci-npu-rollout` | NPU rollout smoke only |
+| `ci-npu-flowgrpo` | NPU FlowGRPO smoke only |
 
 Labels are removed automatically when new commits are pushed; re-apply the
 label after each update. 

@@ -14,7 +14,6 @@
 
 import logging
 import os
-import warnings
 from pprint import pprint
 
 import hydra
@@ -26,6 +25,7 @@ from verl.utils.import_utils import load_class_from_fqn
 
 from verl_omni.utils.config import validate_config
 from verl_omni.utils.diffusion_attention import validate_attention_consistency
+from verl_omni.utils.rl_insight import enable_rl_insight
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "INFO"))
@@ -40,6 +40,11 @@ def run_diffusion_v1(config, task_runner_class=None) -> None:
                 settings, model paths, and training hyperparameters.
         task_runner_class: For recipe to change TaskRunner.
     """
+    # TransferQueue is required for v1; force-enable it before ray.init() so
+    # TRANSFER_QUEUE_ENABLE is exported to every worker through the runtime env.
+    config.transfer_queue.enable = True
+    enable_rl_insight(config)
+
     if not ray.is_initialized():
         default_runtime_env = get_ppo_ray_runtime_env()
         ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
@@ -145,13 +150,8 @@ def main(config):
     if config.trainer.get("use_v1", False):
         run_diffusion_v1(config)
     else:
-        # Fall back to the legacy (v0) diffusion trainer entrypoint.
-        warnings.warn(
-            "trainer.use_v1 is unset or false; the legacy diffusion trainer is deprecated. "
-            "Set trainer.use_v1=true to use the V1 trainer.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        # Explicit opt-out of the (default since v0.3.0) V1 trainer: fall back
+        # to the legacy v0 entrypoint, which emits the deprecation warning.
         from verl_omni.trainer.main_diffusion import run_diffusion
 
         run_diffusion(config)

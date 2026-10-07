@@ -21,10 +21,12 @@ from typing import Any, Optional
 import ray
 import torch
 import vllm_omni.entrypoints.cli.serve
-from verl.utils.net_utils import get_free_port
+from verl.utils.profiler import build_rollout_dist_profiler
+from verl.utils.tracking import RLInsightLogger
 from verl.workers.config import RolloutConfig
 from verl.workers.rollout.replica import RolloutMode, TokenOutput
 from verl.workers.rollout.utils import run_uvicorn
+from verl.workers.rollout.vllm_rollout import ServerAdapter
 from verl.workers.rollout.vllm_rollout.utils import (
     VLLM_LORA_INT_ID,
     VLLM_LORA_NAME,
@@ -37,7 +39,9 @@ from vllm_omni.entrypoints import AsyncOmni
 from vllm_omni.entrypoints.openai.api_server import omni_init_app_state
 from vllm_omni.lora.request import LoRARequest
 
+from verl_omni.utils.net_utils import get_non_ephemeral_free_port
 from verl_omni.workers.config import DiffusionModelConfig, DiffusionRolloutConfig, OmniModelConfig
+from verl_omni.workers.rollout.base import get_rollout_sequence_parallel_size, get_rollout_world_size
 from verl_omni.workers.rollout.replica import DiffusionOutput
 from verl_omni.workers.rollout.vllm_rollout.vllm_omni_ar_strategy import ARStrategy
 from verl_omni.workers.rollout.vllm_rollout.vllm_omni_diffusion_strategy import DiffusionStrategy
@@ -82,6 +86,22 @@ class vLLMOmniHttpServer(vLLMHttpServer):
 
     def _post_init(self, cuda_visible_devices: str) -> None:
         """Run strategy post-init and preserve the replica device list."""
+        if get_rollout_sequence_parallel_size(self.config) > 1:
+            self.replica_world_size = get_rollout_world_size(self.config)
+            profiler = self.profiler_controller
+            self.profiler_controller = build_rollout_dist_profiler(
+                self.replica_rank,
+                self.replica_world_size,
+                config=self.config.profiler if profiler.config is not None else None,
+                tool_config=profiler.tool_config,
+            )
+        if getattr(self.config, "full_determinism", False):
+            from verl.workers.engine.utils import enable_full_determinism
+
+            rollout_seed = getattr(self.config, "seed", 42)
+            enable_full_determinism(seed=rollout_seed)
+            os.environ["VERL_SEED"] = str(rollout_seed)
+            os.environ["VLLM_BATCH_INVARIANT"] = "1"
         # Set before vllm-omni narrows per-stage visible devices; stage workers
         # remap their ZMQ ranks through this replica-level list.
         os.environ["VERL_ZMQ_BASE_VISIBLE_DEVICES"] = cuda_visible_devices
@@ -130,6 +150,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
     async def run_server(self, args: argparse.Namespace):
         engine_args = OmniEngineArgs.from_cli_args(args)
         engine_args = asdict(engine_args)
+        engine_args["log_stats"] = not self.config.disable_log_stats
 
         # TODO (mike): drop this patch once vllm-omni strips the serialized default
         # fault_tolerance_config at its kwargs boundary, or vLLM defaults it to None —
@@ -157,8 +178,12 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         if engine_args.get("seed") is None:
             engine_args.pop("seed", None)
 
-        diffusion_master_port, diffusion_master_sock = get_free_port("127.0.0.1", with_alive_sock=True)
-        diffusion_master_sock.close()
+        # The port stays unbound until vllm-omni's rank-0 DiffusionWorker
+        # listens on it; see get_non_ephemeral_free_port for why it must not
+        # come from the ephemeral range.
+        # TODO (mike): drop once vllm-omni passes a FileStore-backed
+        # distributed_init_method to its workers instead of env:// MASTER_PORT.
+        diffusion_master_port = get_non_ephemeral_free_port("127.0.0.1")
 
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = str(diffusion_master_port)
@@ -184,6 +209,9 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             self._temp_deploy_ctx = None
 
         self.engine = engine_client
+        if isinstance(self._generate_strategy, ARStrategy):
+            # attach engine-level monkey patches
+            await self.collective_rpc(method="monkey_patch_model")
         self._server_port, self._server_task = await run_uvicorn(app, args, self._server_address)
 
     async def run_headless(self, args: argparse.Namespace):
@@ -191,17 +219,42 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         # TODO (mike): support multi node
         raise NotImplementedError("vLLM-Omni headless mode is not implemented yet.")
 
+    async def collective_rpc(
+        self,
+        method: Any,
+        timeout: float | None = None,
+        args: tuple = (),
+        kwargs: dict[str, Any] | None = None,
+    ):
+        """Dispatch a shared RPC to the stages selected by the active strategy."""
+        await self.engine.collective_rpc(
+            method=method,
+            timeout=timeout,
+            args=args,
+            kwargs=kwargs,
+            stage_ids=self._generate_strategy.collective_rpc_stage_ids(method),
+        )
+
     # -----------------------------------------------------------------------
-    # wake_up hook: Omni does not restore KV cache on wake-up
+    # wake_up hook: full wake must include kv_cache
     # -----------------------------------------------------------------------
 
     def _get_wake_up_tags(self) -> list[str]:
-        return ["weights"]
+        # AsyncOmni.generate() rejects leftover sleeping tags. Weights-only left
+        # kv_cache asleep and every generate() failed.
+        return ["kv_cache", "weights"]
 
     def _resolve_sleep_level(self) -> int:
-        """
-        # TODO (andy): use sleep_level=2 when vllm-omni implements wake_up
-        after level-2 sleep AND the trainer syncs the full pipeline.
+        """Level 1 is the correct phase-separation level for vllm-omni diffusion.
+
+        Unlike upstream vLLM (whose LLM level-1 keeps weights resident and only
+        drops KV cache), vllm-omni's diffusion-worker level-1 sleep offloads the
+        whole "weights" pool — transformer + text encoder + VAE — to pinned host
+        memory and unmaps the GPU pages, and ``wake_up(tags=["weights"])``
+        restores them via DMA. Level 2 additionally discards the CPU copy but
+        ``AsyncOmni.wake_up`` deliberately raises NotImplementedError after a
+        level-2 sleep, and the trainer would have to re-upload the full
+        pipeline each cycle. Keep 1 until both change.
         """
         return 1
 
@@ -212,10 +265,13 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             logger.info("skip wake_up in standalone mode")
             return
         resolved_tags = tags if tags is not None else self._get_wake_up_tags()
-        acks = await self.engine.wake_up(tags=resolved_tags)
-        self._validate_acks("wake_up", acks)
-        await self.engine.resume_generation()
-        self._invalidate_lora_request_cache()
+        with RLInsightLogger.trace_state(
+            f"vllm_wake_up[{','.join(resolved_tags)}]", state_lane_id=f"replica_{self.replica_rank}"
+        ):
+            acks = await self.engine.wake_up(tags=resolved_tags)
+            self._validate_acks("wake_up", acks)
+            await self.engine.resume_generation()
+            self._invalidate_lora_request_cache()
 
     async def set_global_steps(self, global_steps: int):
         if global_steps != self.global_steps:
@@ -236,36 +292,44 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         if self.rollout_mode == RolloutMode.STANDALONE:
             logger.info("skip sleep in standalone mode")
             return
-        acks = await self.engine.sleep(level=self._resolve_sleep_level())
-        self._validate_acks("sleep", acks)
-        await self._reset_frontend_mm_cache()
-        self._invalidate_lora_request_cache()
+        with RLInsightLogger.trace_state("vllm_sleep", state_lane_id=f"replica_{self.replica_rank}"):
+            acks = await self.engine.sleep(level=self._resolve_sleep_level())
+            self._validate_acks("sleep", acks)
+            await self._reset_frontend_mm_cache()
+            self._invalidate_lora_request_cache()
 
     async def release_kv_cache(self):
-        """Free cache around a weight sync without discarding Omni weights."""
+        """Free cache around a weight sync without discarding Omni weights.
+
+        Sleeps both tags then wakes weights only so NCCL can write into the
+        existing buffers. Do not resume generation here: kv_cache is still
+        asleep and AsyncOmni.generate() rejects that state. resume_kv_cache()
+        restores the cache and re-opens admission after the sync.
+        """
         if self.node_rank != 0 or not self.config.free_cache_engine:
             return
         if self.rollout_mode == RolloutMode.COLOCATED:
             return
-        acks = await self.engine.sleep(level=self._resolve_sleep_level())
-        self._validate_acks("sleep", acks)
-        await self._reset_frontend_mm_cache()
-        self._invalidate_lora_request_cache()
-        acks = await self.engine.wake_up(tags=["weights"])
-        self._validate_acks("wake_up", acks)
-        await self.engine.resume_generation()
-        self._invalidate_lora_request_cache()
+        with RLInsightLogger.trace_state("vllm_release_kv_cache", state_lane_id=f"replica_{self.replica_rank}"):
+            acks = await self.engine.sleep(level=self._resolve_sleep_level())
+            self._validate_acks("sleep", acks)
+            await self._reset_frontend_mm_cache()
+            self._invalidate_lora_request_cache()
+            acks = await self.engine.wake_up(tags=["weights"])
+            self._validate_acks("wake_up", acks)
+            self._invalidate_lora_request_cache()
 
     async def resume_kv_cache(self):
-        """Restore after a weight sync."""
+        """Restore kv_cache after a weight sync and re-open generate admission."""
         if self.node_rank != 0 or not self.config.free_cache_engine:
             return
         if self.rollout_mode == RolloutMode.COLOCATED:
             return
-        acks = await self.engine.wake_up(tags=["kv_cache"])
-        self._validate_acks("wake_up", acks)
-        await self.engine.resume_generation()
-        self._invalidate_lora_request_cache()
+        with RLInsightLogger.trace_state("vllm_resume_kv_cache", state_lane_id=f"replica_{self.replica_rank}"):
+            acks = await self.engine.wake_up(tags=["kv_cache"])
+            self._validate_acks("wake_up", acks)
+            await self.engine.resume_generation()
+            self._invalidate_lora_request_cache()
 
     async def resume_generation(self):
         if self.node_rank == 0:
@@ -472,6 +536,26 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         return {"aborted": True, "request_id": request_id}
 
 
+class vLLMOmniServerAdapter(ServerAdapter):
+    """Reuse verl's transport with SP-aware replica and IPC rank mapping."""
+
+    def __init__(self, config, model_config, device_mesh, replica_rank: int = -1):
+        super().__init__(config, model_config, device_mesh, replica_rank=replica_rank)
+        if get_rollout_sequence_parallel_size(self.config) == 1:
+            return
+
+        rank = int(os.environ["RANK"])
+        local_world_size = int(os.environ["RAY_LOCAL_WORLD_SIZE"])
+        world_size = get_rollout_world_size(self.config)
+        self.replica_rank = rank // world_size if replica_rank == -1 else replica_rank
+        self.rollout_rank = rank % world_size
+        self.node_rank = self.rollout_rank // local_world_size
+        self._has_server = self.rollout_rank == 0
+        local_rank = self.rollout_rank % local_world_size
+        job_id = ray.get_runtime_context().get_job_id()
+        self.zmq_handle = f"ipc:///tmp/rl-colocate-zmq-{job_id}-replica-{self.replica_rank}-rank-{local_rank}.sock"
+
+
 class vLLMOmniReplica(vLLMReplica):
     def __init__(
         self,
@@ -480,9 +564,24 @@ class vLLMOmniReplica(vLLMReplica):
         model_config: DiffusionModelConfig | OmniModelConfig,
         gpus_per_node: int = 8,
         is_reward_model: bool = False,
+        is_teacher_model: bool = False,
+        name_suffix: str = "",
     ):
-        super().__init__(replica_rank, config, model_config, gpus_per_node, is_reward_model)
+        super().__init__(
+            replica_rank, config, model_config, gpus_per_node, is_reward_model, is_teacher_model, name_suffix
+        )
+        if get_rollout_sequence_parallel_size(self.config) > 1:
+            self.world_size = get_rollout_world_size(self.config)
+            self.gpus_per_replica_node = min(gpus_per_node, self.world_size)
+            if self.world_size % self.gpus_per_replica_node:
+                raise ValueError(f"Replica size {self.world_size} must be divisible by GPUs per node {gpus_per_node}.")
+            self.nnodes = self.world_size // self.gpus_per_replica_node
         self.server_class = ray.remote(vLLMOmniHttpServer)
+
+    # The rollout worker actor class is verl's default
+    # (ray.remote(CheckpointEngineWorker)): the omni_delta_sharded backend
+    # passes verl's sglang-only "delta_sharded" gate by name and resolves
+    # through CheckpointEngineRegistry like any other backend.
 
     def _get_server_name_prefix(self) -> str:
         return "vllm_omni_"

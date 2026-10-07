@@ -30,8 +30,6 @@ _GIT_PIN_FILES = {
     "verl_git": _REPO_ROOT / ".github" / "verl_pin.txt",
 }
 _ENV_PIN_KEYS = {
-    "kernels_pip": "NIGHTLY_PIN_KERNELS",
-    "fa3_fwd_pip": "NIGHTLY_PIN_FA3_FWD",
     "flash_attn_pip": "NIGHTLY_PIN_FLASH_ATTN",
     "transformers_pip": "NIGHTLY_PIN_TRANSFORMERS",
 }
@@ -117,13 +115,12 @@ def collect_env_metadata(*, attn_backend: str | None = None, rollout_attn_backen
             "accelerate": _distribution_version("accelerate"),
         },
         "attention": {
-            "attn_backend": attn_backend or os.environ.get("NIGHTLY_ATTN_BACKEND"),
-            "rollout_attn_backend": rollout_attn_backend or os.environ.get("NIGHTLY_ROLLOUT_ATTN_BACKEND"),
+            "attn_backend": attn_backend,
+            "rollout_attn_backend": rollout_attn_backend,
             **fa3_flags,
         },
         "nightly": {
             "deterministic_seed": os.environ.get("NIGHTLY_DETERMINISTIC_SEED"),
-            "require_fa3": os.environ.get("NIGHTLY_REQUIRE_FA3"),
         },
     }
     return metadata

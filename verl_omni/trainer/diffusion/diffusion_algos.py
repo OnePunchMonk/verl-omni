@@ -805,7 +805,19 @@ class DiffusionNFTLoss(DiffusionLossFn):
         reward_prob: torch.Tensor,
         config: DiffusionActorConfig,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        """Compute the DiffusionNFT policy loss and auxiliary metrics."""
+        """Compute the DiffusionNFT policy loss and auxiliary metrics.
+
+        `dL/dv_theta` decomposes into exactly two parts, because `old` is detached and only
+        `v_theta` moves both x0 estimates (with `dx0_pos/dv_theta = -t*beta` and
+        `dx0_neg/dv_theta = +t*beta`, which cancels the `1/beta` in the loss):
+
+            dL/dv_theta  ~  A*2/w * ( [ beta * t * (v_theta - v_old) ]  -  [ 2*(r-0.5) * (x0_old - x0) ] )
+                                      \\____________ A * beta ____________/     \\_______ adv, no A _______/
+
+        Only the first term grows with `A * beta`; the second is the whole learning signal, and
+        `A` cancels out of it because `r - 0.5 = adv / (2*A)`. `log10_signal_ratio` reports the
+        two scales separately, since the `1/beta` scaling of the loss values hides that balance.
+        """
         loss_cfg = config.diffusion_loss
         beta = loss_cfg.mix_beta
 
@@ -846,11 +858,27 @@ class DiffusionNFTLoss(DiffusionLossFn):
         loss = policy_loss + loss_cfg.ref_kl_coef * ref_kl_loss
 
         with torch.no_grad():
+            # The two gradient-scale terms of the decomposition in the docstring: the reward-free
+            # contraction onto `v_old`, and the reward term, from which `adv_clip_max` cancels.
+            x0_old = xt - t_expanded * old_prediction
+            reward_weight_col = reward_weight.view(-1, *([1] * (x0.ndim - 1)))
+            contraction = loss_cfg.adv_clip_max * beta * t_expanded * (forward_prediction - old_prediction)
+            reward_term = loss_cfg.adv_clip_max * 2.0 * (reward_weight_col - 0.5) * (x0_old - x0)
+            contraction_scale = contraction.abs().mean()
+            reward_term_scale = reward_term.abs().mean()
             metrics = {
                 "actor/policy_loss": policy_loss.detach().item(),
                 "actor/positive_loss": positive_loss.mean().detach().item(),
                 "actor/negative_loss": negative_loss.mean().detach().item(),
+                "actor/contraction_scale": contraction_scale.detach().item(),
+                "actor/reward_term_scale": reward_term_scale.detach().item(),
+                "actor/log10_signal_ratio": (
+                    (torch.log10(reward_term_scale.clamp(min=1e-30)) - torch.log10(contraction_scale.clamp(min=1e-30)))
+                    .detach()
+                    .item()
+                ),
                 "actor/ref_kl_loss": ref_kl_loss.detach().item(),
+                "actor/ref_kl_contribution": (loss_cfg.ref_kl_coef * ref_kl_loss).detach().item(),
                 "actor/old_deviate": ((forward_prediction - old_prediction) ** 2).mean().detach().item(),
                 "actor/reward_prob_mean": reward_weight.mean().detach().item(),
                 "actor/total_loss": loss.detach().item(),
@@ -1049,6 +1077,77 @@ class KLLoss(DiffusionLossFn):
             std_dev_t=model_output["std_dev_t"],
         )
         return DiffusionLossResult(loss=kl_loss, metrics=metrics)
+
+
+@register_diffusion_loss("dmd2")
+class DMDLoss(DiffusionLossFn):
+    """DMD2 student surrogate and batch dispatch for fake-score denoising.
+
+    Inputs share an explicit normalized latent layout ``(B, ...)``. The engine
+    supplies detached score predictions and detached fake-stage model inputs;
+    this loss also enforces the target/score stop-gradient boundary.
+    """
+
+    @classmethod
+    def compute_loss(
+        cls,
+        *,
+        generated_x0: torch.Tensor,
+        fake_x0: torch.Tensor,
+        teacher_x0: torch.Tensor,
+        normalization_epsilon: float = 1e-6,
+        gradient_mask: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Compute the fp32 distribution-matching surrogate, not paired regression."""
+        from verl_omni.trainer.diffusion.distillation.utils import dmd_gradient, dmd_surrogate_loss
+
+        gradient, normalizer, nonfinite = dmd_gradient(fake_x0, teacher_x0, generated_x0, normalization_epsilon)
+        loss, active = dmd_surrogate_loss(generated_x0, gradient, gradient_mask)
+        return loss, {
+            "dmd/loss": loss.detach(),
+            "dmd/normalizer": normalizer.mean(),
+            "dmd/gradient_norm": gradient.norm(),
+            "dmd/nonfinite": nonfinite,
+            "dmd/active_elements": active,
+        }
+
+    def validate_inputs(self, *, loss_name: str, model_output: dict[str, Any], data: TensorDict) -> None:
+        """Validate the stage-specific tensors without requiring PPO inputs."""
+        stage = tu.get_non_tensor_data(data, "dmd_stage", default="student")
+        if stage == "student":
+            required = ("generated_x0", "fake_x0", "teacher_x0")
+        elif stage == "fake_score":
+            required = ("generated_x0", "noise_pred", "noise")
+        else:
+            raise ValueError(f"Invalid dmd_stage {stage!r}; expected 'student' or 'fake_score'.")
+        missing = [key for key in required if key not in model_output]
+        if missing:
+            raise KeyError(f"Diffusion loss `{loss_name}` is missing model_output keys: {missing}")
+
+    def __call__(self, *, config: DiffusionActorConfig, model_output: dict[str, Any], data: TensorDict):
+        """Dispatch DMD2 loss with an engine-provided mask, falling back to the batch mask."""
+        self.validate_inputs(loss_name="dmd2", model_output=model_output, data=data)
+        stage = tu.get_non_tensor_data(data, "dmd_stage", default="student")
+        gradient_mask = model_output.get("gradient_mask", data.get("gradient_mask"))
+        if stage == "student":
+            loss, metrics = self.compute_loss(
+                generated_x0=model_output["generated_x0"],
+                fake_x0=model_output["fake_x0"],
+                teacher_x0=model_output["teacher_x0"],
+                normalization_epsilon=tu.get_non_tensor_data(data, "dmd_normalization_epsilon", default=1e-6),
+                gradient_mask=gradient_mask,
+            )
+        else:
+            from verl_omni.trainer.diffusion.distillation.utils import fake_score_loss
+
+            loss, active = fake_score_loss(
+                model_output["noise_pred"],
+                model_output["noise"],
+                model_output["generated_x0"],
+                gradient_mask=gradient_mask,
+            )
+            metrics = {"fake_score/loss": loss.detach(), "fake_score/active_elements": active}
+        return DiffusionLossResult(loss=loss, metrics=metrics, add_loss_metric=True)
 
 
 @register_diffusion_loss("distill_kl")

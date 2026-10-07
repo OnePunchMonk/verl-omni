@@ -97,6 +97,10 @@ Additional guides:
 - [CI/CD Layers](docs/contributing/ci_cd.md)
 - [Common Pitfalls](docs/contributing/common_pitfalls.md)
 
+## Governance
+
+Project roles, module ownership, and the committer nomination process are documented in [`docs/community/governance.md`](docs/community/governance.md). Path-based reviewer routing lives in [`.github/CODEOWNERS`](.github/CODEOWNERS).
+
 ## Pull Requests & Code Reviews
 
 Thanks for submitting a PR! To streamline reviews:
@@ -111,6 +115,10 @@ Thanks for submitting a PR! To streamline reviews:
 - Add or update tests in the CI workflows, or explain why tests aren't applicable.
 
 ## AI-Assisted Contributions
+
+You are the author of everything you post. If an agent drafted your PR
+description, commit messages, replies or code comments, read them properly and
+revise until they are concise and say what you would write yourself.
 
 See
 
