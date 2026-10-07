@@ -905,11 +905,9 @@ class ModalityGroupedBatchSampler(Sampler[int]):
         return self._build_weighted_batches(indices_by_modality, generator)
 
     def __iter__(self):
-        batches = self._build_batches()
-        # Trainers never call ``set_epoch``; advance it so each pass resamples.
-        self.epoch += 1
-        for batch in batches:
+        for batch in self._build_batches():
             yield from batch
+        self.epoch += 1
 
     def __len__(self) -> int:
         return self._length
