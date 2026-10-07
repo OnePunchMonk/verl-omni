@@ -135,8 +135,7 @@ def _is_missing(value: Any) -> bool:
 def _append_media_path(media: dict[str, list[Any]], key: str, value: Any) -> None:
     if _is_missing(value):
         return
-    if value not in media[key]:
-        media[key].append(value)
+    media[key].append(value)
 
 
 def _normalise_media_list(value: Any) -> list[Any]:
@@ -252,6 +251,7 @@ def _validate_media_alignment(conversations: Sequence[Sequence[Any]], media: dic
 def _build_preference_branch(sample: dict[str, Any], answer: Any) -> dict[str, Any]:
     prompt = _as_python(sample.get("prompt", []))
     media = _initial_media(sample)
+    inline_media: dict[str, list[Any]] = {key: [] for key in media}
     conversations: list[list[Any]] = []
 
     for message in prompt:
@@ -262,9 +262,14 @@ def _build_preference_branch(sample: dict[str, Any], answer: Any) -> dict[str, A
         if role == "system":
             continue
         conversation = [role or "user"]
-        _append_content(conversation, message.get("content", ""), media)
+        _append_content(conversation, message.get("content", ""), inline_media)
         if len(conversation) > 1:
             conversations.append(conversation)
+
+    # Inline blocks that repeat a top-level path are the same media; repeated inline blocks are not.
+    for key, paths in inline_media.items():
+        declared = list(media[key])
+        media[key].extend(path for path in paths if path not in declared)
 
     _validate_media_alignment(conversations, media)
     conversations.append(["assistant", ("text", _answer_text(answer))])
