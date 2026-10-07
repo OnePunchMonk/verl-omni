@@ -956,7 +956,7 @@ def _offline_mllm_dpo_collate_fn(features, pad_mode: DatasetPadMode | str | None
         for feature in features
         for key, value in feature.items()
         if key != "multi_modal_inputs" and not isinstance(value, torch.Tensor)
-    }
+    } - tensor_keys
 
     batch: dict[str, Any] = {}
     for key in sorted(tensor_keys):
