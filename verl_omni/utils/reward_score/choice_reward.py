@@ -34,10 +34,11 @@ def compute_score(
     del kwargs
     prediction = extract_answer(solution_str)
     target = extract_answer(ground_truth)
-    # An empty prediction means no ``<answer>`` tag was found at all; never treat
-    # that as a match, even when ``ground_truth`` also fails to parse (both would
-    # otherwise extract to "" and compare equal).
-    accuracy = float(bool(prediction) and prediction == target)
+    if not target:
+        # Samples without a tagged answer should be filtered out during data
+        # preprocessing; scoring them would let an untagged response match "".
+        raise ValueError(f"ground_truth has no <answer> tag: {ground_truth!r}")
+    accuracy = float(prediction == target)
     return {
         "score": accuracy,
         "accuracy": accuracy,
