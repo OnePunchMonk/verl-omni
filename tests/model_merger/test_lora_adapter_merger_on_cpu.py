@@ -211,8 +211,32 @@ def test_lora_only_causal_lm_export_and_reload(api, tmp_path, monkeypatch, capsy
     # The adapter config and manifest must agree on the task type.
     config["task_type"] = None
     (adapter_dir / "adapter_config.json").write_text(json.dumps(config))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="conflicts with manifest"):
         run_cli(monkeypatch, ["test", "--backend=fsdp", f"--test_hf_dir={adapter_dir}"])
+
+    # A malformed manifest task type is a validation error, not a TypeError.
+    manifest_path = adapter_dir / "merge_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["task_type"] = ["CAUSAL_LM"]
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="causal LM PEFT LoRA"):
+        run_cli(monkeypatch, ["test", "--backend=fsdp", f"--test_hf_dir={adapter_dir}"])
+
+    # Without the actor HF config the adapter type cannot be determined, so export fails.
+    (source / "huggingface" / "config.json").unlink()
+    with pytest.raises(FileNotFoundError):
+        run_cli(
+            monkeypatch,
+            [
+                "merge",
+                "--backend=fsdp",
+                f"--local_dir={source}",
+                f"--target_dir={tmp_path / 'export_no_config'}",
+                "--base_model=original/base",
+                "--trust-checkpoint",
+            ],
+        )
+    assert not (tmp_path / "export_no_config").exists()
 
 
 @pytest.mark.parametrize("fault", ["missing_metadata", "unknown_adapter"])

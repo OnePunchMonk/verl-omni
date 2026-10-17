@@ -63,7 +63,7 @@ def validate_artifact(target: str | Path) -> dict:
         config = read_json(root / "adapter_config.json")
         # Manifests without task_type predate omni adapter export and are diffusion adapters.
         task_type = manifest.get("task_type")
-        if config.get("peft_type") != "LORA" or task_type not in {None, "CAUSAL_LM"}:
+        if config.get("peft_type") != "LORA" or not (task_type is None or task_type == "CAUSAL_LM"):
             raise ValueError("Expected a diffusion or causal LM PEFT LoRA configuration")
         if config.get("task_type") != task_type:
             raise ValueError("Adapter task type conflicts with manifest")
