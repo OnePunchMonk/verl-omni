@@ -2,7 +2,7 @@
 
 Last updated: 09/24/2026
 
-For Ascend NPU, see the {doc}`NPU installation guide <install_npu>`. For AMD GPU, see the {doc}`ROCm installation guide <install_rocm>`.
+For Ascend NPU, see the {doc}`NPU installation guide <install_npu>`. For AMD GPU, see the {doc}`ROCm installation guide <install_rocm>`. For Intel GPU, see the {doc}`Intel GPU installation guide <install_xpu>`.
 
 ## Requirements
 
@@ -50,7 +50,7 @@ source .venv/bin/activate
 2. Install vLLM
 
 ```bash
-uv pip install vllm==0.28.0 --torch-backend=auto
+uv pip install vllm==0.30.0 --torch-backend=auto
 ```
 
 3. Install the rollout engine and training stack
